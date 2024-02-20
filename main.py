@@ -1,14 +1,30 @@
 import argparse
+import pandas as pd
+import cv2
+import matplotlib
+import matplotlib.pyplot as plt
 
 
-def testTask1(folderName):
+def testTask1(folderName: str) -> int:
+    test_func()
+
     # assume that this folder name has a file list.txt that contains the annotation
-    task1Data = pd.read_csv(folderName+"/list.txt")
-    # Write code to read in each image
+    filenames = pd.read_csv(folderName + "\list.txt")
+
+
+    lower_threshold = 0.2 * 255
+    upper_threshold = lower_threshold * 1.5
+    for filename in filenames.FileName:
+        img = matplotlib.image.imread(f"{folderName}\\{filename}")
+        img_edges = cv2.Canny(img, lower_threshold, upper_threshold)
+        plt.imshow(img_edges)
+        plt.show()
+
     # Write code to process the image
     # Write your code to calculate the angle and obtain the result as a list predAngles
     # Calculate and provide the error in predicting the angle for each image
-    return(totalError)
+    totalError = 0
+    return totalError
 
 def testTask2(iconDir, testDir):
     # assume that test folder name has a directory annotations with a list of csv files
