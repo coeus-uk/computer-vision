@@ -1,5 +1,15 @@
+
+# Windows venv
 Scripts
 Lib/site-packages
+
+# Linux venv
+bin
+lib
+lib64
+share
+
+# universal venv stuff
 pyvenv.cfg
 __pycache__
 venv
