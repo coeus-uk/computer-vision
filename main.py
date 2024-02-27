@@ -4,9 +4,11 @@ import cv2
 import matplotlib
 import matplotlib.pyplot as plt
 
+from task1 import canny
+
 
 def testTask1(folderName: str) -> int:
-    test_func()
+    canny()
 
     # assume that this folder name has a file list.txt that contains the annotation
     filenames = pd.read_csv(folderName + "\list.txt")
