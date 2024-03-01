@@ -37,9 +37,31 @@ class Utils:
         img_x = cv2.filter2D(img, -1, kernel_x)
         img_y = cv2.filter2D(img, -1, kernel_y)
 
-        theta = np.arctan2(img_x, img_y)
-        magnitude = np.sqrt(np.square(img_x) + np.square(img_y))
+        # theta = np.arctan2(img_x, img_y)
+        # magnitude = np.sqrt(np.square(img_x) + np.square(img_y))
 
+        # Apply Sobelx in high output datatype 'float32'
+        # and then converting back to 8-bit to prevent overflow
+
+        absx_64 = np.absolute(img_x)
+        sobelx_8u1 = absx_64/absx_64.max()*255
+        sobelx_8u = np.uint8(sobelx_8u1)
+
+        # Similarly for Sobely
+        
+        absy_64 = np.absolute(img_y)
+        sobely_8u1 = absy_64/absy_64.max()*255
+        sobely_8u = np.uint8(sobely_8u1)
+
+        # From gradients calculate the magnitude and changing
+        # it to 8-bit (Optional)
+        mag = np.hypot(sobelx_8u, sobely_8u)
+        mag = mag/mag.max()*255
+        mag = np.uint8(mag)
+
+        # Find the direction and change it to degree
+        theta = np.arctan2(img_y, img_x)
+        angle = np.rad2deg(theta)
 
         """
         USE TO SEE PLOTS UNCOMMENT ONLY IF YOU WANT TO SEE MIDDLE STEPS                
@@ -49,10 +71,10 @@ class Utils:
         # plt.imshow(cv2.cvtColor(img_x, cv2.COLOR_GRAY2RGB)), plt.title('X Derivatives Gradient'), plt.show()
         # plt.imshow(cv2.cvtColor(img_y, cv2.COLOR_GRAY2RGB)), plt.title('Y Derivatives Gradient'), plt.show()
 
-        return (theta, magnitude)
+        return (angle, mag)
     
     def non_max_suppression(self, magnitudes: np.ndarray, theta: np.ndarray , window_size: int) -> np.ndarray:
-        theta = np.rad2deg(theta)
+        #theta = np.rad2deg(theta)
         # Find the neighbouring pixels (b,c) in the rounded gradient direction
         # and then apply non-max suppression
         angle = np.rad2deg(theta)
