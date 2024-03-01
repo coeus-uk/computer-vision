@@ -1,20 +1,18 @@
 import numpy as np
 import cv2
 
+
 def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: float, high_threshold: float) -> np.ndarray:
-    # Gauss filter
-    img = cv2.GaussianBlur(src, (gauss_kernel_size, gauss_kernel_size), sigma)
-
-    # Sobel Filtering
-    (theta, magnitude) = sobel(img)
-
-    # Non Maximum Suppression
-    img = non_max_suppression(magnitude, theta, 5)
+    img = src.copy().astype(np.double)
+    img = cv2.GaussianBlur(img, (gauss_kernel_size, gauss_kernel_size), sigma)
+    (dirs, magnitudes) = sobel(img)
+    img = non_max_suppression_v1(magnitudes, dirs)
 
     # Hystheresis Thresholding
-    img = hysteresis_thresholding(img,low_threshold, high_threshold)
+    img = hysteresis_thresholding(img, low_threshold, high_threshold)
 
-    return img
+    return magnitudes
+
 
 def sobel(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     kernel_x = np.array([
@@ -27,56 +25,123 @@ def sobel(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         [0, 0, 0],
         [1, 2, 1]
     ])
-    
+
     img_x = cv2.filter2D(img, -1, kernel_x)
+    img_x = np.absolute(img_x)
+    img_x = img_x / img_x.max() * 255
+    img_x = img_x.astype(np.uint8)
+
     img_y = cv2.filter2D(img, -1, kernel_y)
+    img_y = np.absolute(img_y)
+    img_y = img_y / img_y.max() * 255
+    img_y = img_y.astype(np.uint8)
+
+    magnitude = np.hypot(img_x, img_y)
+    magnitude = magnitude / magnitude.max() * 255
+    magnitude = magnitude.astype(np.uint8)
 
     theta = np.arctan2(img_x, img_y)
-    magnitude = np.sqrt(np.square(img_x) + np.square(img_y))
 
     """
-    USE TO SEE PLOTS UNCOMMENT ONLY IF YOU WANT TO SEE MIDDLE STEPS                
-    """
+        USE TO SEE PLOTS UNCOMMENT ONLY IF YOU WANT TO SEE MIDDLE STEPS                
+        """
     # plt.imshow(theta), plt.title('theta'), plt.show()
     # plt.imshow(magnitude), plt.title('magnitudes'), plt.show()
     # plt.imshow(cv2.cvtColor(img_x, cv2.COLOR_GRAY2RGB)), plt.title('X Derivatives Gradient'), plt.show()
     # plt.imshow(cv2.cvtColor(img_y, cv2.COLOR_GRAY2RGB)), plt.title('Y Derivatives Gradient'), plt.show()
-    
+
     return (theta, magnitude)
 
-def non_max_suppression(magnitudes: np.ndarray, angle: np.ndarray , window_size: int) -> np.ndarray:
+
+def non_max_suppression(magnitudes: np.ndarray, dirs: np.ndarray) -> np.ndarray:
+    '''
+    Find the largest magnitude in each direction within a 3x3 sliding window.
+    Iterate over the image with a 3x3 sliding window, breaks the window into 
+    8 directions and find the maximum magnitude along each of them.
+
+    E.g. here the angle of pixel '@' is close to the diagonal passing through
+    ##b  c & b so it is compared to those neighbouring pixels.
+    #@#
+    c##
+
+    #b# here the angle is close to the vertical, meaning it is compared against
+    #@# the neighbours above and below.
+    #c#
+    '''
+    # dirs = np.rad2deg(dirs.copy()) # <- personally I'd find fractions of pi easier to read than decimals of degrees
+
+    # convert range of angles from range [-2pi, 2pi] to [0, 2pi]
+    dirs = (dirs + (2 * np.pi)) % (2 * np.pi)
+
+    M, N = magnitudes.shape
+    result = np.empty_like(magnitudes)
+    pi_over_8 = np.pi / 8
+
+    # Angles here are going clockwise, might try going anticlockwise if this doesn't work
+    # Not padding for the moment but that's ok
+    for i in range(1, M-1):
+        # <- this can be an enumeration, directions is only ever accessed at [i,j]
+        for j in range(1, N-1):
+            b, c = 0, 0
+            # Is the direction close to 0 or pi?
+            if ((15 * pi_over_8) > dirs[i, j] >= pi_over_8) or ((7 * pi_over_8) <= dirs[i, j] < (9 * pi_over_8)):
+                b = magnitudes[i, j+1]
+                c = magnitudes[i, j-1]
+            # Is the direction close to pi/4 or 5pi / 4?
+            elif (pi_over_8 < dirs[i, j] < (3 * pi_over_8)) or (9 * pi_over_8 <= dirs[i, j] < 11 * pi_over_8):
+                b = magnitudes[i+1, j+1]
+                c = magnitudes[i-1, j-1]
+            # Is the direction close to pi/2 or 3pi/2?
+            elif ((3 * pi_over_8) <= dirs[i, j] < (5 * pi_over_8)) or ((11 * pi_over_8) <= dirs[i, j] < (13 * pi_over_8)):
+                b = magnitudes[i+1, j]
+                c = magnitudes[i-1, j]
+            # Is the direction close to 3pi/4 or  7pi/4?
+            elif (5 * pi_over_8 <= dirs[i, j] < 7 * pi_over_8) or ((13 * pi_over_8) <= dirs[i, j] < (15 * pi_over_8)):
+                b = magnitudes[i+1, j-1]
+                c = magnitudes[i-1, j+1]
+
+            # Non-max Suppression
+            if magnitudes[i, j] == max(magnitudes[i, j], b, c):
+                result[i, j] = magnitudes[i, j]
+            else:
+                result[i, j] = 0
+
+    return result
+
+
+def non_max_suppression_v1(magnitudes: np.ndarray, angle: np.ndarray) -> np.ndarray:
     # Find the neighbouring pixels (b,c) in the rounded gradient direction
     # and then apply non-max suppression
     angle = np.rad2deg(angle)
     M, N = magnitudes.shape
-    Non_max = np.zeros((M,N), dtype= np.uint8)
+    Non_max = np.zeros((M, N), dtype=np.uint8)
 
     for i in range(1, M-1):
         for j in range(1, N-1):
             # Horizontal 0
-            if (0 <= angle[i,j] < 22.5) or (157.5 <= angle[i,j] <= 180) or (-22.5 <= angle[i,j] < 0) or (-180 <= angle[i,j] < -157.5):
+            if (0 <= angle[i, j] < 22.5) or (157.5 <= angle[i, j] <= 180) or (-22.5 <= angle[i, j] < 0) or (-180 <= angle[i, j] < -157.5):
                 b = magnitudes[i, j+1]
                 c = magnitudes[i, j-1]
             # Diagonal 45
-            elif (22.5 <= angle[i,j] < 67.5) or (-157.5 <= angle[i,j] < -112.5):
+            elif (22.5 <= angle[i, j] < 67.5) or (-157.5 <= angle[i, j] < -112.5):
                 b = magnitudes[i+1, j+1]
                 c = magnitudes[i-1, j-1]
             # Vertical 90
-            elif (67.5 <= angle[i,j] < 112.5) or (-112.5 <= angle[i,j] < -67.5):
+            elif (67.5 <= angle[i, j] < 112.5) or (-112.5 <= angle[i, j] < -67.5):
                 b = magnitudes[i+1, j]
                 c = magnitudes[i-1, j]
             # Diagonal 135
-            elif (112.5 <= angle[i,j] < 157.5) or (-67.5 <= angle[i,j] < -22.5):
+            elif (112.5 <= angle[i, j] < 157.5) or (-67.5 <= angle[i, j] < -22.5):
                 b = magnitudes[i+1, j-1]
-                c = magnitudes[i-1, j+1]           
-                
-            # Non-max Suppression
-            if (magnitudes[i,j] >= b) and (magnitudes[i,j] >= c):
-                Non_max[i,j] = magnitudes[i,j]
-            else:
-                Non_max[i,j] = 0   
+                c = magnitudes[i-1, j+1]
 
-    return Non_max     
+            # Non-max Suppression
+            if (magnitudes[i, j] >= b) and (magnitudes[i, j] >= c):
+                Non_max[i, j] = magnitudes[i, j]
+            else:
+                Non_max[i, j] = 0
+
+    return Non_max
 
 # def non_max_suppression(magnitudes: np.ndarray, window_size: int) -> np.ndarray:
 #     non_max_suppression = np.empty_like(magnitudes)
@@ -89,12 +154,13 @@ def non_max_suppression(magnitudes: np.ndarray, angle: np.ndarray , window_size:
 
 #     for (i, row) in enumerate(magnitudes):
 #         for (j, _) in enumerate(row):
-#             right_bound, left_bound = (j + 2 * window_length) + 1, j 
+#             right_bound, left_bound = (j + 2 * window_length) + 1, j
 #             top_bound, bot_bound = (i + 2 * window_length) + 1, i
 #             window = padded_magnitude[bot_bound:top_bound, left_bound:right_bound]
 #             non_max_suppression[i, j] = np.amax(window)
-    
+
 #     return non_max_suppression
+
 
 def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshold: float) -> np.ndarray:
     # Set high and low threshold
@@ -102,7 +168,7 @@ def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshol
     #Non_max = img
 
     M, N = img.shape
-    out = np.zeros((M,N), dtype= np.uint8)
+    out = np.zeros((M, N), dtype=np.uint8)
 
     # If edge intensity is greater than 'High' it is a sure-edge
     # below 'low' threshold, it is a sure non-edge
@@ -114,14 +180,14 @@ def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshol
 
     # Set same intensity value for all edge pixels
     out[strong_i, strong_j] = 255
-    out[zeros_i, zeros_j ] = 0
+    out[zeros_i, zeros_j] = 0
     out[weak_i, weak_j] = 75
 
     M, N = out.shape
     for i in range(1, M-1):
         for j in range(1, N-1):
-            if (out[i,j] == 75):
-                if 255 in [out[i+1, j-1],out[i+1, j],out[i+1, j+1],out[i, j-1],out[i, j+1],out[i-1, j-1],out[i-1, j],out[i-1, j+1]]:
+            if (out[i, j] == 75):
+                if 255 in [out[i+1, j-1], out[i+1, j], out[i+1, j+1], out[i, j-1], out[i, j+1], out[i-1, j-1], out[i-1, j], out[i-1, j+1]]:
                     out[i, j] = 255
                 else:
                     out[i, j] = 0
