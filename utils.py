@@ -174,14 +174,7 @@ def hough_lines(img: np.ndarray, threshold: int, theta_res: float = np.deg2rad(1
     print(np.shape(edge_points))
 
     # Find points in hough space
-    # for i in range(len(edge_points[0])):
-    #     y = edge_points[0][i]
-    #     x = edge_points[1][i]
-    #     for (i, theta) in enumerate(theta_range):
-    #         rho = int(x * np.cos(theta) + y * np.sin(theta))
-    #         votes[rho + max_rho, i] += 1
-
-    for i in range(len(edge_points[0])): # enumerate the transpose for cleaner loop
+    for i in range(len(edge_points[0])):
         y = edge_points[0][i]
         x = edge_points[1][i]
         for t_idx in range(len(theta_range)):
@@ -226,9 +219,9 @@ def draw_lines(img, lines):
 
 
 
-def hough_line(img, theta_res=1, rho_res=1):
+def hough_line(img: np.ndarray, theta_res=1, rho_res=1):
     height, width = img.shape
-    max_rho = int(np.sqrt(height*2 + width*2))
+    max_rho = int(np.sqrt(height**2 + width**2))
     theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
     rho_range = np.arange(-max_rho, max_rho, rho_res)
     num_thetas = len(theta_range)
@@ -254,3 +247,17 @@ def get_lines(accumulator, theta_range, rho_range, threshold):
                 theta = theta_range[x]
                 lines.append((rho, theta))
     return lines
+
+def draw_lines(img, lines):
+    for rho, theta in lines:
+        a = np.cos(theta)
+        b = np.sin(theta)
+        x0 = a * rho
+        y0 = b * rho
+        x1 = int(x0 + 1000 * (-b))
+        y1 = int(y0 + 1000 * (a))
+        x2 = int(x0 - 1000 * (-b))
+        y2 = int(y0 - 1000 * (a))
+        cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+
