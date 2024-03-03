@@ -157,3 +157,54 @@ def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshol
                     out[i, j] = 0
 
     return out
+
+
+# def hough_lines(self, img: np.ndarray, rho: int, theta: float, threshold: int, lines: None, srn = 0, stn= 0) -> np.ndarray:
+#     hough_accumulator = np.zeros(10)
+
+#     for 
+import numpy as np
+import cv2
+
+def hough_line(img, theta_res=1, rho_res=1):
+    height, width = img.shape
+    max_rho = int(np.sqrt(height**2 + width**2))
+    theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
+    rho_range = np.arange(-max_rho, max_rho, rho_res)
+    num_thetas = len(theta_range)
+    accumulator = np.zeros((2 * max_rho, num_thetas), dtype=np.uint8)
+
+    edge_points = np.nonzero(img)
+
+    for i in range(len(edge_points[0])):
+        y = edge_points[0][i]
+        x = edge_points[1][i]
+        for t_idx in range(num_thetas):
+            rho = int(x * np.cos(theta_range[t_idx]) + y * np.sin(theta_range[t_idx]))
+            accumulator[rho + max_rho, t_idx] += 1
+
+    return accumulator, theta_range, rho_range
+
+def get_lines(accumulator, theta_range, rho_range, threshold):
+    lines = []
+    for y in range(accumulator.shape[0]):
+        for x in range(accumulator.shape[1]):
+            if accumulator[y, x] > threshold:
+                rho = rho_range[y]
+                theta = theta_range[x]
+                lines.append((rho, theta))
+    return lines
+
+def draw_lines(img, lines):
+    for rho, theta in lines:
+        a = np.cos(theta)
+        b = np.sin(theta)
+        x0 = a * rho
+        y0 = b * rho
+        x1 = int(x0 + 1000 * (-b))
+        y1 = int(y0 + 1000 * (a))
+        x2 = int(x0 - 1000 * (-b))
+        y2 = int(y0 - 1000 * (a))
+        cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+
