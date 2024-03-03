@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import math
 
 
 def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: float, high_threshold: float) -> np.ndarray:
@@ -91,19 +92,23 @@ def non_max_suppression(magnitudes: np.ndarray, dirs: np.ndarray) -> np.ndarray:
                 c = magnitudes[i, j-1]
             # Close to positive diagonal?
             elif (pi_over_8 <= theta < 3 * pi_over_8) or (pi_over_8 - pi <= theta < 3 * pi_over_8 - pi):
-                b = magnitudes[i+1, j+1]
-                c = magnitudes[i-1, j-1]
+                b = magnitudes[i+1, j-1]
+                c = magnitudes[i-1, j+1]
             # Close to vertical?
             elif (3 * pi_over_8 <= theta < 5 * pi_over_8) or (3 * pi_over_8 - pi <= theta < 5 * pi_over_8 - pi):
                 b = magnitudes[i+1, j]
                 c = magnitudes[i-1, j]
             # Close to negative diagonal?
             elif (5 * pi_over_8 <= theta < 7 * pi_over_8) or (5 * pi_over_8 - pi <= theta < 7 * pi_over_8 - pi):
-                b = magnitudes[i+1, j-1]
-                c = magnitudes[i-1, j+1]
+                b = magnitudes[i+1, j+1]
+                c = magnitudes[i-1, j-1]
+
+            # TODO: investigate best weight for this
+            weight = np.abs(np.tan(theta))
+            interpolated_mag = int(b) * weight + int(c) * (1 - weight)
 
             # Non-max Suppression
-            if magnitudes[i, j] == max(magnitudes[i, j], b, c):
+            if magnitudes[i, j] == max(magnitudes[i, j], interpolated_mag):
                 result[i, j] = magnitudes[i, j]
             else:
                 result[i, j] = 0
@@ -157,42 +162,31 @@ def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshol
                     out[i, j] = 0
 
     return out
-
-
-# def hough_lines(self, img: np.ndarray, rho: int, theta: float, threshold: int, lines: None, srn = 0, stn= 0) -> np.ndarray:
-#     hough_accumulator = np.zeros(10)
-
-#     for 
-import numpy as np
-import cv2
-
-def hough_line(img, theta_res=1, rho_res=1):
+ 
+def hough_lines(img: np.ndarray, threshold: int, theta_res: float = np.deg2rad(1), rho_res: float = 1) -> list:
     height, width = img.shape
-    max_rho = int(np.sqrt(height**2 + width**2))
-    theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
+    max_rho = int(math.hypot(width, height))
+    theta_range = np.arange(-np.pi / 2, np.pi / 2, theta_res)
     rho_range = np.arange(-max_rho, max_rho, rho_res)
-    num_thetas = len(theta_range)
-    accumulator = np.zeros((2 * max_rho, num_thetas), dtype=np.uint8)
-
+    votes = np.zeros((len(rho_range), len(theta_range)), dtype=np.uint16)
     edge_points = np.nonzero(img)
 
-    for i in range(len(edge_points[0])):
-        y = edge_points[0][i]
-        x = edge_points[1][i]
-        for t_idx in range(num_thetas):
-            rho = int(x * np.cos(theta_range[t_idx]) + y * np.sin(theta_range[t_idx]))
-            accumulator[rho + max_rho, t_idx] += 1
-
-    return accumulator, theta_range, rho_range
-
-def get_lines(accumulator, theta_range, rho_range, threshold):
+    # Find points in hough space
+    for point in edge_points:
+        x, y = point[0], point[1]
+        for (i, theta) in enumerate(theta_range):
+            rho  = int(x * np.cos(theta) + y * np.sin(theta))
+            votes[rho + max_rho, i] += 1
+            
+    # Find correponding lines for each point in the hough space
     lines = []
-    for y in range(accumulator.shape[0]):
-        for x in range(accumulator.shape[1]):
-            if accumulator[y, x] > threshold:
-                rho = rho_range[y]
-                theta = theta_range[x]
+    for (i, row) in enumerate(votes):
+        for (j, num_votes) in enumerate(row):
+            if num_votes > threshold:
+                rho = rho_range[i]
+                theta = theta_range[j]
                 lines.append((rho, theta))
+
     return lines
 
 def draw_lines(img, lines):
