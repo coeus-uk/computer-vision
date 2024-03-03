@@ -167,24 +167,47 @@ def hough_lines(img: np.ndarray, threshold: int, theta_res: float = np.deg2rad(1
     height, width = img.shape
     max_rho = int(math.hypot(width, height))
     theta_range = np.arange(-np.pi / 2, np.pi / 2, theta_res)
+    # print("theta range: ", theta_range)
     rho_range = np.arange(-max_rho, max_rho, rho_res)
     votes = np.zeros((len(rho_range), len(theta_range)), dtype=np.uint16)
-    edge_points = np.nonzero(img)
+    edge_points = np.nonzero(img) # rename to edge_coords or something clearer
+    print(np.shape(edge_points))
 
     # Find points in hough space
-    for point in edge_points:
-        x, y = point[0], point[1]
-        for (i, theta) in enumerate(theta_range):
-            rho  = int(x * np.cos(theta) + y * np.sin(theta))
-            votes[rho + max_rho, i] += 1
+    # for i in range(len(edge_points[0])):
+    #     y = edge_points[0][i]
+    #     x = edge_points[1][i]
+    #     for (i, theta) in enumerate(theta_range):
+    #         rho = int(x * np.cos(theta) + y * np.sin(theta))
+    #         votes[rho + max_rho, i] += 1
+
+    for i in range(len(edge_points[0])): # enumerate the transpose for cleaner loop
+        y = edge_points[0][i]
+        x = edge_points[1][i]
+        for t_idx in range(len(theta_range)):
+            rho = int(x * np.cos(theta_range[t_idx]) + y * np.sin(theta_range[t_idx]))
+
+            votes[rho + max_rho, t_idx] += 1
+    # for point in edge_points:
+    #     x, y = point[0], point[1]
+    #     for (i, theta) in enumerate(theta_range):
+    #         rho  = int(x * np.cos(theta) + y * np.sin(theta))
+    #         votes[rho + max_rho, i] += 1
             
     # Find correponding lines for each point in the hough space
     lines = []
-    for (i, row) in enumerate(votes):
-        for (j, num_votes) in enumerate(row):
-            if num_votes > threshold:
-                rho = rho_range[i]
-                theta = theta_range[j]
+    # for (i, row) in enumerate(votes):
+    #     for (j, num_votes) in enumerate(row):
+    #         if num_votes > threshold:
+    #             rho = rho_range[i]
+    #             theta = theta_range[j]
+    #             lines.append((rho, theta))
+
+    for y in range(votes.shape[0]):
+        for x in range(votes.shape[1]):
+            if votes[y, x] > threshold:
+                rho = rho_range[y]
+                theta = theta_range[x]
                 lines.append((rho, theta))
 
     return lines
@@ -202,3 +225,32 @@ def draw_lines(img, lines):
         cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
 
+
+def hough_line(img, theta_res=1, rho_res=1):
+    height, width = img.shape
+    max_rho = int(np.sqrt(height*2 + width*2))
+    theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
+    rho_range = np.arange(-max_rho, max_rho, rho_res)
+    num_thetas = len(theta_range)
+    accumulator = np.zeros((2 * max_rho, num_thetas), dtype=np.uint8)
+
+    edge_points = np.nonzero(img)
+
+    for i in range(len(edge_points[0])):
+        y = edge_points[0][i]
+        x = edge_points[1][i]
+        for t_idx in range(num_thetas):
+            rho = int(x * np.cos(theta_range[t_idx]) + y * np.sin(theta_range[t_idx]))
+            accumulator[rho + max_rho, t_idx] += 1
+
+    return accumulator, theta_range, rho_range
+
+def get_lines(accumulator, theta_range, rho_range, threshold):
+    lines = []
+    for y in range(accumulator.shape[0]):
+        for x in range(accumulator.shape[1]):
+            if accumulator[y, x] > threshold:
+                rho = rho_range[y]
+                theta = theta_range[x]
+                lines.append((rho, theta))
+    return lines
