@@ -219,7 +219,7 @@ def draw_lines(img, lines):
 
 
 
-def hough_line(img: np.ndarray, theta_res=1, rho_res=1):
+def hough_line(img: np.ndarray, theta_res=3, rho_res=1):
     height, width = img.shape
     max_rho = int(np.sqrt(height**2 + width**2))
     theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
