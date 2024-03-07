@@ -227,25 +227,28 @@ def hough_line(img: np.ndarray, theta_res=3, rho_res=1):
     num_thetas = len(theta_range)
     accumulator = np.zeros((2 * max_rho, num_thetas), dtype=np.uint8)
 
-    edge_points = np.nonzero(img)
+    edge_points = np.argwhere(img)
 
-    for i in range(len(edge_points[0])):
-        y = edge_points[0][i]
-        x = edge_points[1][i]
-        for t_idx in range(num_thetas):
-            rho = int(x * np.cos(theta_range[t_idx]) + y * np.sin(theta_range[t_idx]))
-            accumulator[rho + max_rho, t_idx] += 1
+    x_vals = edge_points[:, 1]
+    y_vals = edge_points[:, 0]
+
+    cos_vals = np.cos(theta_range)
+    sin_vals = np.sin(theta_range)
+
+    rho_vals = np.round(x_vals[:, None] * cos_vals + y_vals[:, None] * sin_vals).astype(np.int)
+    rho_vals += max_rho
+
+    for t_idx in range(num_thetas):
+        rho, count = np.unique(rho_vals[:, t_idx], return_counts=True)
+        accumulator[rho, t_idx] = count
 
     return accumulator, theta_range, rho_range
 
 def get_lines(accumulator, theta_range, rho_range, threshold):
-    lines = []
-    for y in range(accumulator.shape[0]):
-        for x in range(accumulator.shape[1]):
-            if accumulator[y, x] > threshold:
-                rho = rho_range[y]
-                theta = theta_range[x]
-                lines.append((rho, theta))
+    y_idxs, x_idxs = np.where(accumulator > threshold)
+    rho_vals = rho_range[y_idxs]
+    theta_vals = theta_range[x_idxs]
+    lines = list(zip(rho_vals, theta_vals))
     return lines
 
 def draw_lines(img, lines):
