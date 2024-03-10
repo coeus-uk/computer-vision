@@ -1,6 +1,5 @@
 import numpy as np
 import cv2
-import math
 
 
 def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: float, high_threshold: float) -> np.ndarray:
