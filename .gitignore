@@ -1,3 +1,4 @@
+results.csv
 
 # Windows venv
 Scripts
@@ -10,6 +11,7 @@ lib64
 share
 
 # universal venv stuff
+.venv
 pyvenv.cfg
 __pycache__
 venv
