@@ -2,27 +2,35 @@ import utils
 import numpy as np
 import pandas as pd
 from cv2.typing import MatLike
+from dataclasses import dataclass
 
-def get_angle_between_lines(img: MatLike, hough_threshold=100, 
-                         hough_theta_res=np.deg2rad(1), hough_rho_res=1,
-                         canny_gauss_kernel_size=5,canny_gauss_sigma=5,
-                         canny_low_threshold=20, canny_high_threshold=40) -> float:
+@dataclass
+class Params:
+    hough_threshold: int = 119
+    hough_theta_res: float = 1.6689999
+    hough_rho_res: float = 0.1
+    canny_gauss_kernel_size: int = 25
+    canny_gauss_sigma: float = 2
+    canny_gauss_low_threshold: float = 70
+    canny_gauss_high_threshold: float = 110
 
-    edges = utils.canny(img, canny_gauss_kernel_size, canny_gauss_sigma,
-        canny_low_threshold, canny_high_threshold)
+"""
+Empirically tested values that deliver good results. 
+"""
+PARAMS = Params()
 
-    hough_lines= utils.hough_lines(edges, hough_threshold, hough_theta_res,
+def get_angle_between_lines(img_edges: MatLike, hough_threshold: int, 
+                         hough_theta_res: float, hough_rho_res: float) -> float:
+
+    hough_lines= utils.hough_lines(img_edges, hough_threshold, hough_theta_res,
         hough_rho_res)
 
-    line_angles = []
-    for rho, theta in hough_lines:
-        # Handle whether the line is in the positive or negative x
-        if (rho < 0):
-            theta += np.pi
-        line_angles.append(theta)
+    line_angles = [theta if rho > 0 else theta + np.pi 
+                   for (rho, theta) in hough_lines]
 
+    # Can't calcualte angle with one line, set error to inf and move on
     if (len(line_angles) < 2):
-        print(f"Skipping  - need at least 2 lines")
+        return np.iinfo("i").max
 
     # Calculate difference of angles and choose the smaller angle
     angle1 = max(line_angles) - min(line_angles)
@@ -42,29 +50,15 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
     for (param_index, params) in enumerate(all_param_combinations):
         rho_res, theta_res, threshold = params[0], params[1], params[2]
         for (image_index, (image, correct_answer)) in enumerate(images):
-                    hough_lines = utils.hough_lines(image, threshold,
-                                                    theta_res, rho_res)
-                    
-                    line_angles = [theta if rho > 0 else theta + np.pi 
-                                   for (rho, theta) in hough_lines]
+                    angle = get_angle_between_lines(image, threshold, theta_res,
+                                                     rho_res)
 
-                    # Can't calcualte angle with one line, set error to inf and move on
-                    if (len(line_angles) < 2):
-                        results[param_index][image_index] = np.inf
-                        continue
-
-                    # Calculate difference of angles and choose the smaller angle
-                    angle1 = max(line_angles) - min(line_angles)
-                    angle2 = (2 * np.pi) - angle1
-                    angle_between_lines = min(angle1, angle2)
-                    angle_between_lines = np.round(np.rad2deg(angle_between_lines))
-
-                    error = abs(angle_between_lines - correct_answer)
+                    error = abs(angle - correct_answer)
                     results[param_index][image_index] = error
                     # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
         
-        total_error = sum(results[param_index])
-        print(f"[rho_res, theta_res, threshold] = {params} -- results = {results[param_index]} -- total error: {total_error}")
+        total_error = np.sum(results[param_index])
+        print(f"{param_index} [rho_res, theta_res, threshold] = {params} -- results = {results[param_index]} -- total error: {total_error}")
 
     write_to_csv(results, all_param_combinations)
 
