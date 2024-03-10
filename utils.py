@@ -152,29 +152,44 @@ def hough_lines(img: np.ndarray, threshold:int=20, theta_res: float=3, rho_res: 
 
 def hough_line(img: np.ndarray, theta_res: float=3, rho_res: float=1) -> tuple[np.ndarray[np.uint8], np.ndarray[float], np.ndarray[float]]:
     height, width = img.shape
-    max_rho = int(np.sqrt(height**2 + width**2))
+    max_rho = np.hypot(height, width).astype(int) 
     theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
     rho_range = np.arange(-max_rho, max_rho, rho_res)
-    num_thetas = len(theta_range)
-    accumulator = np.zeros((2 * max_rho, num_thetas), dtype=np.uint8)
+    accumulator = np.zeros((len(rho_range), len(theta_range)), dtype=np.int64)
 
-    edge_points = np.argwhere(img)
-
-    x_vals = edge_points[:, 1]
-    y_vals = edge_points[:, 0]
+    # For each point in cartesian coordiantes (x,y) lying on an edge, 
+    #  calculate a range of lines in polar coordinates (r, theta) that pass
+    #  through the point. 
+    #  Recall that rho = x * cos(theta) + y * sin(theta).
+    y_vals, x_vals = np.where(img > 0)
 
     cos_vals = np.cos(theta_range)
     sin_vals = np.sin(theta_range)
 
-    rho_vals = np.round(x_vals[:, None] * cos_vals + y_vals[:, None] * sin_vals).astype(np.int)
+    y_sin_theta = np.array([y * sin_vals for y in y_vals])
+    x_cos_theta = np.array([x * cos_vals for x in x_vals])
+
+    # Row index -> index of rho in rho_range
+    # Col index -> index of theta in theta range
+    rho_vals = np.round(x_cos_theta + y_sin_theta).astype(int)
+
+    # Map values from [-max_rho, max_rho] to [0, 2*max_rho]
     rho_vals += max_rho
 
-    for t_idx in range(num_thetas):
-        rho, count = np.unique(rho_vals[:, t_idx], return_counts=True)
-        accumulator[rho, t_idx] = count
+    # Map values of rho to index of that value in rho_range
+    rho_indexes = (rho_vals // rho_res).astype(np.int32)
+
+    # For each possible angle, determine which values of rho are used to 
+    #  construct lines through each point, as well as how many time it is used.
+    #  Add this to the total number of votes for this pair of (rho, theta)
+    for t_idx in range(len(theta_range)):
+        unique_rho_indexes, counts = np.unique(rho_indexes[:, t_idx], return_counts=True)
+        accumulator[unique_rho_indexes, t_idx] += counts
 
     return accumulator, theta_range, rho_range
 
+# This function can definately be combined with hough_line, it is only ever called as a combination with hough_line and vice versa.
+# This would simplify the API.
 def get_lines(accumulator, theta_range, rho_range, threshold):
     y_idxs, x_idxs = np.where(accumulator > threshold)
     rho_vals = rho_range[y_idxs]
