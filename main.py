@@ -1,32 +1,53 @@
 import argparse
 import pandas as pd
 import cv2
-import matplotlib
-import matplotlib.pyplot as plt
+import numpy as np
 
-from task1 import canny
+import task1
+import utils
 
 
 def testTask1(folderName: str) -> int:
-    canny()
+    dataset = pd.read_csv(f"{folderName}/list.txt")
+    pred_angles = []
+    total_error = 0
 
-    # assume that this folder name has a file list.txt that contains the annotation
-    filenames = pd.read_csv(folderName + "\list.txt")
+    print("Precalculate edges for each image...") 
+    images = []
+    for row in dataset.itertuples():
+        filename, correct_answer = row.FileName, row.AngleInDegrees
+        img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
+        edges = utils.canny(img, gauss_kernel_size=25, sigma=2, low_threshold=70, high_threshold=110)
+        images.append((edges, correct_answer))
 
+    # Just testing parameters for now
+    if True:
+        # Adding step to everything because we don't want to include the first 
+        #   elem (0) and we want to include last elem. It becomes (0, end].
+        rhos = np.arange(0, 2.5, 0.5) + 0.5
+        thetas = np.arange(0, 2.5, 0.5) + 0.5
+        thresholds = np.arange(0, 200, 40) + 40
 
-    lower_threshold = 0.2 * 255
-    upper_threshold = lower_threshold * 1.5
-    for filename in filenames.FileName:
-        img = matplotlib.image.imread(f"{folderName}\\{filename}")
-        img_edges = cv2.Canny(img, lower_threshold, upper_threshold)
-        plt.imshow(img_edges)
-        plt.show()
+        task1.try_params(images, rhos, thetas, thresholds)
+    else:
+        for row in dataset.itertuples():
+            filename, correct_answer = row.FileName, row.AngleInDegrees
+
+            # Read in image, importantly with intensity values 0-255 not 0-1
+            img = cv2.imread(f"{folderName}/{filename}", cv2.IMREAD_GRAYSCALE)
+            angle = task1.getAngleBetweenLines(img)
+            pred_angles.append(angle)
+
+            error = abs(angle - correct_answer)
+            total_error += error
+            pass_fail_string = "PASS" if error == 0 else "FAIL"
+            print(f"{filename} -- theta: {angle} -- correct_answer: {correct_answer} -- error: {error} -- {pass_fail_string}")
 
     # Write code to process the image
     # Write your code to calculate the angle and obtain the result as a list predAngles
     # Calculate and provide the error in predicting the angle for each image
-    totalError = 0
-    return totalError
+    return total_error
+
 
 def testTask2(iconDir, testDir):
     # assume that test folder name has a directory annotations with a list of csv files
@@ -55,6 +76,10 @@ if __name__ == "__main__":
     parser.add_argument("--Task2Dataset", help="Provide a folder that contains the Task 2 test Dataset.", type=str, required=False)
     parser.add_argument("--Task3Dataset", help="Provide a folder that contains the Task 3 test Dataset.", type=str, required=False)
     args = parser.parse_args()
+
+    if (args.Task1Dataset == None):
+        testTask1("./Task1Dataset")
+
     if(args.Task1Dataset!=None):
         # This dataset has a list of png files and a txt file that has annotations of filenames and angle
         testTask1(args.Task1Dataset)
