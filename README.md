@@ -4,6 +4,15 @@ I love you homies <3
 Some library functions aren't allowed, but we could use them temporarily to quickly get a working solution then retroactively replace them with our own implementations.
 This would also give us some explar results to regress on later down the line. 
 
+Task1 TODO:
+1. store error as a float and see how that changes our total error, I suspect it will lower it significantly
+2. Check our canny implementation is correct. from inspecting images it seems the edges are a lot thicker than the OpenCV impl. We think it could be a problem with the non-max suppression.
+3. (optional) vectorise canny functions
+4. Once canny is definitely working, try finding a good set of parameters for canny. Vectorisation will help this to be plausible. Possible tricks are running it on a reduced dataset and looking up if there exist some standard values used by other people.
+5. One paramter we need to better understand is the magnitude interpolation coefficient used in non-max-suppression
+6. Check if our strategy of picking lines from the hough space is sound. There will generally be more than one line in the hough space corresponding to a line in the image. At teh moment we pick the largest and smallest values of theta, but does a better strategy exist? Some of this will be addressed by having a better canny edge detection algorithm.
+7. The report
+
 ## Running locally
 1. Install python etc
 2. (Optional) setup venv in '.venv' folder so that jupyter knows it exists
