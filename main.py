@@ -8,6 +8,7 @@ import utils
 
 
 def testTask1(folderName: str) -> int:
+    canny_testing = True
     dataset = pd.read_csv(f"{folderName}/list.txt")
     total_error = 0
 
@@ -16,13 +17,25 @@ def testTask1(folderName: str) -> int:
     gauss_low_threshold = task1.PARAMS.canny_gauss_low_threshold
     gauss_high_threshold = task1.PARAMS.canny_gauss_high_threshold
 
+
     print("Precalculate edges for each image...") 
     images_edges = []
     for row in dataset.itertuples():
         filename, correct_answer = row.FileName, row.AngleInDegrees
         img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
-        edges = utils.canny(img, gauss_kernel_size, gauss_sigma, 
-                            gauss_low_threshold, gauss_high_threshold)
+
+        if canny_testing:
+            gauss_kernel_size = np.arange(3, 21, 2)
+            gauss_sigma = np.arange(3, 20, 1) 
+            gauss_low_threshold = np.arange(20, 60, 5) 
+            gauss_high_threshold = np.arange(30, 120, 5)
+            
+            edges = task1.try_canny_params(img, )
+        else:    
+            edges = utils.canny(img, gauss_kernel_size, gauss_sigma, 
+                                gauss_low_threshold, gauss_high_threshold)
+        
+        
         images_edges.append((edges, correct_answer))
 
     # Just testing parameters for now
