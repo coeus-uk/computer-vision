@@ -37,16 +37,16 @@ def get_angle_between_lines(img_edges: MatLike, hough_threshold: int,
     angle1 = max(line_angles) - min(line_angles)
     angle2 = (2 * np.pi) - angle1
     angle_between_lines = min(angle1, angle2)
-    angle_between_lines = np.rad2deg(angle_between_lines)
+    angle_between_lines = np.round(np.rad2deg(angle_between_lines))
 
     return angle_between_lines
 
 def get_canny(img, kernel, sigm, low_thresh, up_thresh):
 
     img_edges = utils.canny(img, kernel, sigm, low_thresh, up_thresh)
-    benchmark_canny = cv2.Canny()
+    #benchmark_canny = cv2.Canny()
 
-    return np.sum(img_edges - benchmark_canny)
+    return img_edges
 
 def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
                thetas: np.ndarray[float], thresholds: np.ndarray[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -73,26 +73,29 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
 ################################################################
 
 
-def try_canny_params(images: list[tuple[MatLike, float]], kernel_size: np.ndarray[int],
+def try_canny_params(image: np.ndarray, kernel_size: np.ndarray[int],
                sigma: np.ndarray[float], lower_bound: np.ndarray[int], upper_bound: np.ndarray[int]) -> tuple[np.ndarray, np.ndarray]:
     
     all_param_combinations = np.array(np.meshgrid(kernel_size, sigma, lower_bound, upper_bound)).T.reshape(-1,4)
-    results = np.zeros((len(all_param_combinations), len(images)))
-    print(f"Attempting {len(all_param_combinations)} paramter combinations")
+    a, b = image.shape
+    results = np.zeros(((len(all_param_combinations),a,b )))
+    #print(f"Attempting {len(all_param_combinations)} paramter combinations")
 
     for (param_index, params) in enumerate(all_param_combinations):
         kernel, sigm, low_thresh, up_thresh = params[0], params[1], params[2], params[3]
-        for (image_index, (image, correct_answer)) in enumerate(images):
-                    angle = get_canny(image, kernel, sigm, low_thresh, up_threshs)
+        # for (image_index, (image, correct_answer)) in enumerate(images):
+        edges = get_canny(image, kernel, sigm, low_thresh, up_thresh)
+        results[param_index] = edges
 
-                    error = abs(angle - float(correct_answer))
-                    results[param_index][image_index] = error
-                    # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
+    return results, all_param_combinations
+    #     error = abs(angle - float())
+    #     results[param_index] = error
+    #     # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
         
-        total_error = np.sum(results[param_index])
-        print(f"{param_index} [kernel_size, sigma, lower_bound, upper_bound] = {params} -- results = {results[param_index]} -- total error: {total_error}")
+    #     total_error = np.sum(results[param_index])
+    #     print(f"{param_index} [kernel_size, sigma, lower_bound, upper_bound] = {params} -- results = {results[param_index]} -- total error: {total_error}")
 
-    write_to_csv(results, all_param_combinations)
+    # write_to_csv(results, all_param_combinations)
 
 def write_to_csv(errors: np.ndarray, params: np.ndarray) -> None:
     """
