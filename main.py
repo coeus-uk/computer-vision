@@ -2,7 +2,7 @@ import argparse
 import pandas as pd
 import cv2
 import numpy as np
-
+import matplotlib.pyplot as plt
 import task1
 import utils
 
@@ -25,15 +25,18 @@ def testTask1(folderName: str) -> int:
         img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
 
         if canny_testing:
-            gauss_kernel_size = np.arange(3, 21, 2)
-            gauss_sigma = np.arange(3, 20, 1) 
+            gauss_kernel_size = 5 #np.arange(3, 21, 2)
+            gauss_sigma = 20 #np.arange(3, 20, 1) 
             gauss_low_threshold = np.arange(20, 60, 5) 
             gauss_high_threshold = np.arange(30, 120, 5)
+            #print(img)
             
-            edges = task1.try_canny_params(img, )
+            edges, combinations = task1.try_canny_params(img, gauss_kernel_size, gauss_sigma, gauss_low_threshold, gauss_high_threshold)
+            
         else:    
             edges = utils.canny(img, gauss_kernel_size, gauss_sigma, 
                                 gauss_low_threshold, gauss_high_threshold)
+            
         
         
         images_edges.append((edges, correct_answer))
@@ -54,16 +57,20 @@ def testTask1(folderName: str) -> int:
         hough_rho_res = task1.PARAMS.hough_rho_res
         
         results = np.zeros((2, len(images_edges)))
-        for (img_index, (image, correct_answer)) in enumerate(images_edges):
-            angle = task1.get_angle_between_lines(image, hough_threshold,
-                                                  hough_theta_res, hough_rho_res)
-            error = abs(angle - correct_answer)
-            results[0][img_index] = angle
-            results[1][img_index] = error
-        
-        print(f"results = {results[0]}")
-        print(f"errors = {results[1]}")
-        print(f"Total error: {np.sum(results[1])}")
+        #print((images_edges[0]))
+        for combo_index, combos in enumerate(combinations):
+            for (img_index, (image, correct_answer)) in enumerate(images_edges):
+                #print(combo_index)
+                angle = task1.get_angle_between_lines(image[combo_index], hough_threshold,
+                                                    hough_theta_res, hough_rho_res)
+                error = abs(angle - correct_answer)
+                results[0][img_index] = angle
+                results[1][img_index] = error
+            print(f"{combo_index} [kernel, sigm, low_thresh, up_thresh] = {combos} -- results = {results[0]} -- errors = {results[1]} -- total error: {np.sum(results[1])}")
+            # print("Canny Params= {combos}")
+            # print(f"results = {results[0]}")
+            # print(f"errors = {results[1]}")
+            # print(f"Total error: {np.sum(results[1])}")
     # Write code to process the image
     # Write your code to calculate the angle and obtain the result as a list predAngles
     # Calculate and provide the error in predicting the angle for each image
