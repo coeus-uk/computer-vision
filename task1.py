@@ -5,6 +5,9 @@ from cv2.typing import MatLike
 from dataclasses import dataclass
 import cv2
 
+from tqdm import tqdm, trange
+import time
+
 @dataclass
 class Params:
     hough_threshold: int = 119
@@ -79,14 +82,14 @@ def try_canny_params(image: np.ndarray, kernel_size: np.ndarray[int],
     all_param_combinations = np.array(np.meshgrid(kernel_size, sigma, lower_bound, upper_bound)).T.reshape(-1,4)
     a, b = image.shape
     results = np.zeros(((len(all_param_combinations),a,b )))
-    #print(f"Attempting {len(all_param_combinations)} paramter combinations")
-
+    print(f"Attempting {len(all_param_combinations)} paramter combinations")
+    pbar = tqdm(total=100)
     for (param_index, params) in enumerate(all_param_combinations):
         kernel, sigm, low_thresh, up_thresh = params[0], params[1], params[2], params[3]
         # for (image_index, (image, correct_answer)) in enumerate(images):
         edges = get_canny(image, kernel, sigm, low_thresh, up_thresh)
         results[param_index] = edges
-
+        pbar.update((param_index)/len(all_param_combinations))
     return results, all_param_combinations
     #     error = abs(angle - float())
     #     results[param_index] = error

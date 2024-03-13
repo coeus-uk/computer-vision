@@ -25,10 +25,10 @@ def testTask1(folderName: str) -> int:
         img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
 
         if canny_testing:
-            gauss_kernel_size = 5 #np.arange(3, 21, 2)
-            gauss_sigma = 20 #np.arange(3, 20, 1) 
-            gauss_low_threshold = np.arange(20, 60, 5) 
-            gauss_high_threshold = np.arange(30, 120, 5)
+            gauss_kernel_size = np.arange(5, 15, 2)
+            gauss_sigma = np.arange(10, 20, 1) 
+            gauss_low_threshold = np.arange(30, 60, 10) 
+            gauss_high_threshold = np.arange(60, 120, 10)
             #print(img)
             
             edges, combinations = task1.try_canny_params(img, gauss_kernel_size, gauss_sigma, gauss_low_threshold, gauss_high_threshold)
@@ -56,6 +56,7 @@ def testTask1(folderName: str) -> int:
         hough_theta_res = task1.PARAMS.hough_theta_res
         hough_rho_res = task1.PARAMS.hough_rho_res
         
+        data_store = []
         results = np.zeros((2, len(images_edges)))
         #print((images_edges[0]))
         for combo_index, combos in enumerate(combinations):
@@ -67,6 +68,34 @@ def testTask1(folderName: str) -> int:
                 results[0][img_index] = angle
                 results[1][img_index] = error
             print(f"{combo_index} [kernel, sigm, low_thresh, up_thresh] = {combos} -- results = {results[0]} -- errors = {results[1]} -- total error: {np.sum(results[1])}")
+            data_store.append([combo_index, 
+                                combos[0], 
+                                combos[1], 
+                                combos[2], 
+                                combos[3], 
+                                results[0][0], 
+                                results[0][1], 
+                                results[0][2], 
+                                results[0][3], 
+                                results[0][4], 
+                                results[0][5], 
+                                results[0][6], 
+                                results[0][7], 
+                                results[0][8], 
+                                results[0][9],
+                                results[1][0], 
+                                results[1][1], 
+                                results[1][2], 
+                                results[1][3], 
+                                results[1][4], 
+                                results[1][5], 
+                                results[1][6], 
+                                results[1][7], 
+                                results[1][8], 
+                                results[1][9],
+                                np.sum(results[1])
+                                ])
+            
             # print("Canny Params= {combos}")
             # print(f"results = {results[0]}")
             # print(f"errors = {results[1]}")
@@ -74,6 +103,33 @@ def testTask1(folderName: str) -> int:
     # Write code to process the image
     # Write your code to calculate the angle and obtain the result as a list predAngles
     # Calculate and provide the error in predicting the angle for each image
+    df = pd.DataFrame(data_store, columns= ["index", 
+                                        "kernel", 
+                                        "sigma", 
+                                        "low_thresh", 
+                                        "up_thresh", 
+                                        "results1",
+                                        "results2",
+                                        "results3",
+                                        "results4",
+                                        "results5",
+                                        "results6",
+                                        "results7",
+                                        "results8",
+                                        "results9",
+                                        "results10",
+                                        "error1",
+                                        "error2",
+                                        "error3",
+                                        "error4",
+                                        "error5",
+                                        "error6",
+                                        "error7",
+                                        "error8",
+                                        "error9",
+                                        "error10",
+                                        "cumulative results"])
+    df.to_csv("canny_Test.csv")
     return total_error
 
 
