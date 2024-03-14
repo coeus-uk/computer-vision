@@ -13,6 +13,17 @@ Task1 TODO:
 6. Check if our strategy of picking lines from the hough space is sound. There will generally be more than one line in the hough space corresponding to a line in the image. At teh moment we pick the largest and smallest values of theta, but does a better strategy exist? Some of this will be addressed by having a better canny edge detection algorithm.
 7. The report
 
+### Task 2
+
+1. Data split - I suggest splitting the dataset into a dev/test set in a bid to reduce overfitting. I think overfitting is a real risk because we will be using the same image annotations for both training and evaluation. 
+2. Extract templates - Use the provided annotations to identify regions of interest accross the dataset.
+3. Scale templates - Generate a number of versions of each template at different scales, this will use a Gaussian pyramid.
+4. Refine templates - Use techniques such as normalisation, image flipping, and the addition of noise to templates to improve robustness.
+5. Match templates - Run though an image at different resolutions to test against the generated templates.
+6. Calculate bounding box - Not sure on this one, I assume we will have access to teh size of teh template that matches and where the match edges are.
+7. Post processing - I reckon we will need something like non-max suppression to arbitrate between ovelapping bounding boxes.
+8. Evaluate - Use the annotations as a ground truth and use a comparison function to calculate metrics like accuracy, precision, f1, etc.
+
 ## Running locally
 1. Install python etc
 2. (Optional) setup venv in '.venv' folder so that jupyter knows it exists
