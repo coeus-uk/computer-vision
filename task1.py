@@ -61,11 +61,11 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
     for (param_index, params) in enumerate(all_param_combinations):
         rho_res, theta_res, threshold = params[0], params[1], params[2]
         for (image_index, (image, correct_answer)) in enumerate(images):
-                    canny_error = get_angle_between_lines(image, threshold, theta_res,
+                    angle = get_angle_between_lines(image, threshold, theta_res,
                                                      rho_res)
 
             
-                    results[param_index][image_index] = canny_error
+                    results[param_index][image_index] = angle
                     # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
         
         total_error = np.sum(results[param_index])
@@ -76,29 +76,87 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
 ################################################################
 
 
-def try_canny_params(image: np.ndarray, kernel_size: np.ndarray[int],
+def try_canny_params(image_list: list[(np.ndarray, float)], kernel_size: np.ndarray[int],
                sigma: np.ndarray[float], lower_bound: np.ndarray[int], upper_bound: np.ndarray[int]) -> tuple[np.ndarray, np.ndarray]:
     
     all_param_combinations = np.array(np.meshgrid(kernel_size, sigma, lower_bound, upper_bound)).T.reshape(-1,4)
-    a, b = image.shape
-    results = np.zeros(((len(all_param_combinations),a,b )))
+    
+    results = np.zeros((2, len(image_list)))
     print(f"Attempting {len(all_param_combinations)} paramter combinations")
-    pbar = tqdm(total=100)
+    #pbar = tqdm(total=len(all_param_combinations))
+    data_store = []
     for (param_index, params) in enumerate(all_param_combinations):
-        kernel, sigm, low_thresh, up_thresh = params[0], params[1], params[2], params[3]
-        # for (image_index, (image, correct_answer)) in enumerate(images):
-        edges = get_canny(image, kernel, sigm, low_thresh, up_thresh)
-        results[param_index] = edges
-        pbar.update((param_index)/len(all_param_combinations))
-    return results, all_param_combinations
-    #     error = abs(angle - float())
-    #     results[param_index] = error
-    #     # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
-        
-    #     total_error = np.sum(results[param_index])
-    #     print(f"{param_index} [kernel_size, sigma, lower_bound, upper_bound] = {params} -- results = {results[param_index]} -- total error: {total_error}")
+        results[1] = [0 for i in range(10)]
+        for (img_indx, (image, correct_answer)) in enumerate(image_list):
+            kernel, sigm, low_thresh, up_thresh = params[0], params[1], params[2], params[3]
+            edges = get_canny(image, kernel, sigm, low_thresh, up_thresh)
+            
+            angle = get_angle_between_lines(edges, PARAMS.hough_threshold,
+                                                        PARAMS.hough_theta_res, PARAMS.hough_rho_res)
 
-    # write_to_csv(results, all_param_combinations)
+            error = abs(angle - correct_answer)
+            results[0][img_indx] = angle
+            results[1][img_indx] = error
+            print(f"param - img index:{param_index}/{img_indx} [kernel, sigm, low_thresh, up_thresh] = {params} -- results = {angle} -- errors = {error} -- total error: {np.sum(results[1])}")
+        print(" ")
+        data_store.append([ param_index, img_indx, params[0], 
+                                params[1], 
+                                params[2], 
+                                params[3], 
+                                results[0][0], 
+                                results[0][1], 
+                                results[0][2], 
+                                results[0][3], 
+                                results[0][4], 
+                                results[0][5], 
+                                results[0][6], 
+                                results[0][7], 
+                                results[0][8], 
+                                results[0][9],
+                                results[1][0], 
+                                results[1][1], 
+                                results[1][2], 
+                                results[1][3], 
+                                results[1][4], 
+                                results[1][5], 
+                                results[1][6], 
+                                results[1][7], 
+                                results[1][8], 
+                                results[1][9],
+                                np.sum(results[1])
+                                ])
+            
+
+    df = pd.DataFrame(data_store, columns= ["param_index", "img_indx","kernel", 
+                                        "sigma", 
+                                        "low_thresh", 
+                                        "up_thresh", 
+                                        "results1",
+                                        "results2",
+                                        "results3",
+                                        "results4",
+                                        "results5",
+                                        "results6",
+                                        "results7",
+                                        "results8",
+                                        "results9",
+                                        "results10",
+                                        "error1",
+                                        "error2",
+                                        "error3",
+                                        "error4",
+                                        "error5",
+                                        "error6",
+                                        "error7",
+                                        "error8",
+                                        "error9",
+                                        "error10",
+                                        "cumulative results"])
+    df.to_csv("canny_Test.csv")
+
+        
+    return results
+    
 
 def write_to_csv(errors: np.ndarray, params: np.ndarray) -> None:
     """
