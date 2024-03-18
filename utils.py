@@ -39,13 +39,16 @@ def sobel(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     img_x = cv2.Sobel(img, cv2.CV_64F, 1, 0)
     img_y = cv2.Sobel(img, cv2.CV_64F, 0, 1)
 
-    magnitude = np.hypot(img_x, img_y)
-    magnitude = magnitude / magnitude.max() * 255
-    magnitude = magnitude.astype(np.uint8)
+    
 
+    magnitude = np.sqrt(img_x**2 + img_y**2)
+    max_magnitude = np.max(magnitude) #np.hypot(img_x, img_y)
+    magnitude = (magnitude / max_magnitude) * 255
+    #magnitude = magnitude.astype(np.uint8)
+    magnitude_uint8 = np.clip(magnitude, 0, 255).astype(np.uint8)
     theta = np.arctan2(img_y, img_x)
 
-    return (theta, magnitude)
+    return (theta, magnitude_uint8)
 
 
 def non_max_suppression(magnitudes: np.ndarray, dirs: np.ndarray) -> np.ndarray:
@@ -72,39 +75,24 @@ def non_max_suppression(magnitudes: np.ndarray, dirs: np.ndarray) -> np.ndarray:
         raise ValueError("Must have same nmber of magnitudes as directions")
 
     M, N = dirs.shape
-    result = np.empty_like(dirs)
-    pi_over_8 = np.pi / 8
-    pi = np.pi
+    result = np.zeros_like(dirs)
 
-    # Not padding for the moment but that's ok, can always try that later
-    for (i, row) in enumerate(dirs[1:M-1]):
-        for (j, theta) in enumerate(row[1:N-1]):
-            # Close to horizontal?
-            if (-pi_over_8 <= theta < pi_over_8) or (pi - pi_over_8 <= theta <= pi) or (-pi <= theta < pi_over_8 - pi):
-                b = magnitudes[i, j+1]
-                c = magnitudes[i, j-1]
-            # Close to positive diagonal?
-            elif (pi_over_8 <= theta < 3 * pi_over_8) or (pi_over_8 - pi <= theta < 3 * pi_over_8 - pi):
-                b = magnitudes[i+1, j-1]
-                c = magnitudes[i-1, j+1]
-            # Close to vertical?
-            elif (3 * pi_over_8 <= theta < 5 * pi_over_8) or (3 * pi_over_8 - pi <= theta < 5 * pi_over_8 - pi):
-                b = magnitudes[i+1, j]
-                c = magnitudes[i-1, j]
-            # Close to negative diagonal?
-            elif (5 * pi_over_8 <= theta < 7 * pi_over_8) or (5 * pi_over_8 - pi <= theta < 7 * pi_over_8 - pi):
-                b = magnitudes[i+1, j+1]
-                c = magnitudes[i-1, j-1]
+    for i in range(1, M-1):
+        for j in range(1, N-1):
+            theta = dirs[i, j]
+            angle_bin = round(theta / (np.pi / 4)) % 4
 
-            # TODO: investigate best weight for this
-            weight = np.abs(np.tan(theta))
-            interpolated_mag = int(b) * weight + int(c) * (1 - weight)
+            if angle_bin == 0:  # Horizontal
+                neighbors = [magnitudes[i, j-1], magnitudes[i, j+1]]
+            elif angle_bin == 1:  # Positive diagonal
+                neighbors = [magnitudes[i-1, j-1], magnitudes[i+1, j+1]]
+            elif angle_bin == 2:  # Vertical
+                neighbors = [magnitudes[i-1, j], magnitudes[i+1, j]]
+            else:  # Negative diagonal
+                neighbors = [magnitudes[i-1, j+1], magnitudes[i+1, j-1]]
 
-            # Non-max Suppression
-            if magnitudes[i, j] == max(magnitudes[i, j], interpolated_mag):
+            if magnitudes[i, j] >= max(neighbors):
                 result[i, j] = magnitudes[i, j]
-            else:
-                result[i, j] = 0
 
     return result
 

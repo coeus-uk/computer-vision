@@ -13,8 +13,9 @@ class Params:
     hough_threshold: int = 119
     hough_theta_res: float = 1.6689999
     hough_rho_res: float = 0.1
-    canny_gauss_kernel_size: int = 25
-    canny_gauss_sigma: float = 2
+    
+    canny_gauss_kernel_size: int = 3
+    canny_gauss_sigma: float = 20
     canny_gauss_low_threshold: float = 70
     canny_gauss_high_threshold: float = 110
 
@@ -55,7 +56,7 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
                thetas: np.ndarray[float], thresholds: np.ndarray[int]) -> tuple[np.ndarray, np.ndarray]:
     
     all_param_combinations = np.array(np.meshgrid(rhos, thetas, thresholds)).T.reshape(-1,3)
-    results = np.zeros((len(all_param_combinations), len(images)))
+    results = np.zeros((2, len(all_param_combinations), len(images)))
     print(f"Attempting {len(all_param_combinations)} paramter combinations")
 
     for (param_index, params) in enumerate(all_param_combinations):
@@ -65,12 +66,13 @@ def try_params(images: list[tuple[MatLike, float]], rhos: np.ndarray[float],
                                                      rho_res)
 
             
-                    results[param_index][image_index] = angle
+                    results[0][param_index][image_index] = angle
+                    results[1][param_index][image_index] = abs(angle - correct_answer)
                     # print(f"Image {image_index} -- theta: {angle_between_lines} -- correct_answer: {correct_answer} -- error: {error}")
         
-        total_error = np.sum(results[param_index])
-        print(f"{param_index} [rho_res, theta_res, threshold] = {params} -- results = {results[param_index]} -- total error: {total_error}")
-
+        total_error = np.sum(results[1][param_index])
+        print(f"{param_index} [rho_res, theta_res, threshold] = {params} -- results = {results[0][param_index]} -- total error: {total_error}")
+        if total_error == 0: print("\n\n\n STOP THE COUNT \n\n\n")
     write_to_csv(results, all_param_combinations)
 
 ################################################################
