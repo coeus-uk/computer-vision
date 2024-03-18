@@ -67,6 +67,8 @@ def predict_bounding_boxes_pyramid_cv2(img_pyr: list[MatLike],
                 error[i] = np.sum(errors)
                 print(f"template {i + 1} | errors [top, bot, left, right] = {errors}")
 
+                break
+
 
 def laplacian_pyramid(img: MatLike, num_levels: int) -> list[MatLike]:
     """
