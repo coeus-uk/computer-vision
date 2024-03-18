@@ -45,13 +45,13 @@ def testTask1(folderName: str) -> int:
             images_edges.append((edges, correct_answer))
 
         # Just testing parameters for now
-        if False:
+        if True:
             # Adding step to everything because we don't want to include the first 
             #   elem (0) and we want to include last elem. It becomes (0, end].
             #rhos = np.arange(0, 0.5, 0.05) + 0.05
             rhos = np.array([0.1])
-            thetas = np.arange(1.65, 1.68, 0.001) + 0.001
-            thresholds = np.arange(118, 121, 0.1) + 0.1
+            thetas = np.arange(1.60, 2, 0.001) 
+            thresholds = np.arange(60, 75, 1) #+ 0.1
 
             task1.try_params(images_edges, rhos, thetas, thresholds)
         else:
