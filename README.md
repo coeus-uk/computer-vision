@@ -23,7 +23,7 @@ source bin/activate
 
 3. Install dependencies
 ```shell
-pip install pandas opencv-python
+pip install matplotlib pandas opencv-python
 ```
 
 To use the jupyter notbook you'll need some more

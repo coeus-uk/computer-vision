@@ -101,6 +101,7 @@ def try_canny_params(image_list: list[(np.ndarray, float)], kernel_size: np.ndar
             results[1][img_indx] = error
             print(f"param - img index:{param_index}/{img_indx} [kernel, sigm, low_thresh, up_thresh] = {params} -- results = {angle} -- errors = {error} -- total error: {np.sum(results[1])}")
         print(" ")
+        if np.sum(results[1]) == 0: print("\n\n\n STOP THE COUNT \n\n\n")
         data_store.append([ param_index, img_indx, params[0], 
                                 params[1], 
                                 params[2], 
