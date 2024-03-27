@@ -2,73 +2,77 @@ import pandas as pd
 import cv2
 import numpy as np
 from pathlib import Path
+from copy import deepcopy
 from cv2.typing import MatLike
 from typing import Iterator
 
 MATCH_THRESHOLD = 0.8
 
-def predict_bounding_boxes_cv2(img: MatLike, templates: list[np.ndarray], 
-                            template_bounds: list[np.ndarray]) -> None:
-    error = np.empty(len(templates))
-
-    # Calculate bounding boxes of templates on image they are defined
-    for (i, (template, bounds)) in enumerate(zip(templates, template_bounds)):
-        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
-
-        # Calculate bounding box
-        _, _, _, pred_top_left = cv2.minMaxLoc(result)
-        height, width = template.shape
-        pred_left, pred_top = pred_top_left
-        pred_right = pred_left + width
-        pred_bot = pred_top + height
-        pred_bot_right = (pred_right, pred_bot)
-
-        # Draw a rectangle around the matched region
-        cv2.rectangle(img, pred_top_left, pred_bot_right, (0, 255, 0), 1)
-
-        # Evaluate against annotation
-        preds = np.array([pred_top, pred_bot, pred_left, pred_right])
-        errors = np.abs(preds - bounds)
-        error[i] = np.sum(errors)
-        print(f"template {i + 1} | errors [top, bot, left, right] = {errors}")
-
-def predict_bounding_boxes_pyramid_cv2(img_pyr: list[MatLike], 
-                                       template_pyrs: list[list[MatLike]],
-                                       bounds: list[np.ndarray],
-                                       dst: MatLike) -> None:
+def predict_all_templates(templates: list[tuple[str, list[MatLike]]],
+                          img: MatLike, 
+                          annotations: pd.DataFrame,
+                          dst: MatLike | None = None,
+                          num_pyramid_levels: int = 3) -> None:
+    """
+    Predict bounding boxes for a number of templates in a given image.
+    Calculate the error if a match is found.
+    """
+    img_pyramid = laplacian_pyramid(deepcopy(img), num_pyramid_levels)
+    bounding_boxes = { row.classname: np.array([row.left, row.right, row.top, row.bottom])
+                      for row in annotations.itertuples() }
     
-    print(len(template_pyrs))
-    print(len(bounds))
-    # print(img_pyr[0].shape)
-    # print(len(template_pyrs[0]))
-    assert len(template_pyrs) == len(bounds)
-    assert len(img_pyr) == len(template_pyrs[0])
+    for (classname, template_pyr) in templates:
+        pred_bounds = predict_bounding_box(img_pyramid, template_pyr, dst)
+
+        if pred_bounds is None and classname not in bounding_boxes: 
+            print(f"{classname}\t| PASS | Correctly didn't match template")
+            continue
+
+        if pred_bounds is None and classname in bounding_boxes:
+            print(f"{classname}\t| FAIL | Didn't match template when it existed")
+            continue
+
+        annotated_bounds = bounding_boxes[classname]
+        if annotated_bounds is None:
+            print(f"{classname}\t| FAIL | Predicted template is not in the image. "
+                  + f"Predicted bounds: {pred_bounds}")
+            continue
+        
+        errors = np.abs(pred_bounds - annotated_bounds)
+        print(f"{classname}\t| PASS | errors [top, bot, left, right] ="
+                + f" {errors} | total error = {np.sum(errors)}")
+
+def predict_bounding_box(img_pyr: list[MatLike], 
+                         template_pyr: list[MatLike],
+                         dst: MatLike | None) -> np.ndarray | None:
+    """
+    Predict the bounding box of a template in an image.
+
+    Return None when there is no match, otherwise return an array 
+    of positions making up the bounding box [top, bot, left, right]
+    """
+
+    assert len(img_pyr) == len(template_pyr)
     
-    error = np.empty(len(template_pyrs))
-    for (i, (template_pyr, t_bounds)) in enumerate(zip(template_pyrs, bounds)):
-        for (img, template) in zip(img_pyr, template_pyr):
-            result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
-            matches = np.where(result >= MATCH_THRESHOLD)
-            if (matches[0].size > 0):
-                # return matches
-                _, _, _, pred_top_left = cv2.minMaxLoc(result)
-                height, width = template.shape
-                pred_left, pred_top = pred_top_left
-                pred_right = pred_left + width
-                pred_bot = pred_top + height
+    for (img, template) in zip(img_pyr, template_pyr):
+        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED) # <-- this is probably not allowed
+        matches = np.where(result >= MATCH_THRESHOLD)
+        if (matches[0].size > 0):
+            _, _, _, pred_top_left = cv2.minMaxLoc(result)
+            height, width = template.shape
+            pred_left, pred_top = pred_top_left
+            pred_right = pred_left + width
+            pred_bot = pred_top + height
+            preds = np.array([pred_top, pred_bot, pred_left, pred_right])
+
+            # Draw a rectangle around the matched region
+            if dst is not None:
                 pred_bot_right = (pred_right, pred_bot)
-
-                # Draw a rectangle around the matched region
                 cv2.rectangle(dst, pred_top_left, pred_bot_right, (0, 255, 0), 1)
 
-                # Evaluate against annotation
-                preds = np.array([pred_top, pred_bot, pred_left, pred_right])
-                errors = np.abs(preds - t_bounds)
-                error[i] = np.sum(errors)
-                print(f"template {i + 1} | errors [top, bot, left, right] = {errors}")
-
-                break
-
+            return preds
+        
+    return None
 
 def laplacian_pyramid(img: MatLike, num_levels: int) -> list[MatLike]:
     """
@@ -76,17 +80,12 @@ def laplacian_pyramid(img: MatLike, num_levels: int) -> list[MatLike]:
     the differences of Gaussian.
     Modifies `img` inplace, a copy should be passed in if that is not desired.
     """
-    # width, height = img.shape
     gauss_pyr = gaussian_pyrarmid(img, num_levels)
-    laplace_pyr = []
-    for i in range(num_levels - 1):
-        a = gauss_pyr[i]
-        b = cv2.pyrUp(gauss_pyr[i + 1])
-        diff = cv2.subtract(a, b)
-        laplace_pyr.append(diff)
-    laplace_pyr.append(gauss_pyr[-1])
-
-    return laplace_pyr
+    neighbouring_layers = [(gauss_pyr[i], cv2.pyrUp(gauss_pyr[i + 1])) 
+                           for i in range(num_levels - 1)]
+    diff_of_gauss = [cv2.subtract(a, b) for (a, b) in neighbouring_layers]
+    diff_of_gauss.append(gauss_pyr[-1])
+    return diff_of_gauss
 
 def gaussian_pyrarmid(img: MatLike, num_levels: int) -> list[MatLike]:
     """
@@ -125,3 +124,28 @@ def path_lexigraphical_order(path: Path) -> tuple[int, str]:
     """
     path_str = str(path)
     return (len(path_str), path_str)
+
+def predict_bounding_boxes_cv2(img: MatLike, templates: list[np.ndarray], 
+                               template_bounds: list[np.ndarray]) -> None:
+    error = np.empty(len(templates))
+
+    # Calculate bounding boxes of templates on image they are defined
+    for (i, (template, bounds)) in enumerate(zip(templates, template_bounds)):
+        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
+
+        # Calculate bounding box
+        _, _, _, pred_top_left = cv2.minMaxLoc(result)
+        height, width = template.shape
+        pred_left, pred_top = pred_top_left
+        pred_right = pred_left + width
+        pred_bot = pred_top + height
+        pred_bot_right = (pred_right, pred_bot)
+
+        # Draw a rectangle around the matched region
+        cv2.rectangle(img, pred_top_left, pred_bot_right, (0, 255, 0), 1)
+
+        # Evaluate against annotation
+        preds = np.array([pred_top, pred_bot, pred_left, pred_right])
+        errors = np.abs(preds - bounds)
+        error[i] = np.sum(errors)
+        print(f"template {i + 1} | errors [top, bot, left, right] = {errors}")
