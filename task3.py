@@ -35,7 +35,7 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path), cv.IMREAD_UNCHANGED), img_path
+            return cv.imread(str(img_path)), img_path
         else:
             raise StopIteration
 
@@ -57,10 +57,11 @@ class ObjectDetector:
         self.matcher = cv.FlannBasedMatcher(flann_index_params, flann_search_params)
 
     def detect(self, test_img: MatLike, lowe_ratio_test_threshold: float = 0.7, min_match_count: int = 10):
+        kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
+
         for query_img, img_path in self.query_images:
             # Extract keypoints and generate descriptors using SIFT.
             kp_query, desc_query = self.sift.detectAndCompute(query_img, None)
-            kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
 
             # For each descriptor in `desc_query`, find the `k` closest descriptors in 
             # `desc_test`. We choose `k=2` for use in applying Lowe's ratio test, which
@@ -86,25 +87,32 @@ class ObjectDetector:
 
             if len(good_matches) > min_match_count:
                 try:
-                    print(f"Query image {img_path} yields enough good matches. Finding transform...")
-                    source_points = np.array([kp_query[m.queryIdx].pt for m in good_matches], dtype=np.float32).reshape(-1,1,2)
-                    dest_points = np.array([kp_test[m.trainIdx].pt for m in good_matches], dtype=np.float32).reshape(-1,1,2)
+                    print(f"Query image {img_path} yields enough good matches - " + \
+                          f"{len(good_matches)}/{min_match_count}. Finding transform...")
+                    source_points = np.array(
+                        [kp_query[m.queryIdx].pt for m in good_matches], dtype=np.float32
+                    ).reshape(-1,1,2)
+                    dest_points = np.array(
+                        [kp_test[m.trainIdx].pt for m in good_matches], dtype=np.float32
+                    ).reshape(-1,1,2)
 
-                    # We need to implement `findHomography`, `RANSAC`.
+                    # We need to implement `findHomography`, `RANSAC`. This line finds inliers.
                     M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
                     matches_mask = mask.ravel().tolist()
 
                     h, w, c = query_img.shape
-                    points = np.array([[0,0],[0,h-1],[w-1,h-1],[w-1,0]], dtype=np.float32).reshape(-1,1,2)
+                    points = np.array(
+                        [[0,0],[0,h-1],[w-1,h-1],[w-1,0]], dtype=np.float32).reshape(-1,1,2)
                     destination = cv.perspectiveTransform(points, M)
 
-                    polyline_test_img = cv.polylines(test_img.copy(), [np.int32(destination)], True, 255, 3, cv.LINE_AA)
+                    polyline_test_img = cv.polylines(
+                        test_img.copy(), [np.int32(destination)], True, 255, 3, cv.LINE_AA)
                 except:
-                    # matches_mask = None
+                    print(f"An exception was raised while handling query image {img_path}")
                     continue
             else:
-                print(f"Skipping query image {img_path}. Not enough good matches found - {len(good_matches)}/{min_match_count}")
-                # matches_mask = None
+                print(f"Skipping query image {img_path}. Not enough good matches found - " + \
+                      f"{len(good_matches)}/{min_match_count}")
                 continue
 
             draw_params = {
@@ -114,6 +122,7 @@ class ObjectDetector:
                 "flags": 2,
             }
 
-            matches_img = cv.drawMatches(query_img, kp_query, polyline_test_img, kp_test, good_matches, None, **draw_params)
+            matches_img = cv.drawMatches(
+                query_img, kp_query, polyline_test_img, kp_test, good_matches, None, **draw_params)
             plt.imshow(matches_img)
             plt.show()
