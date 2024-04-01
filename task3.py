@@ -2,8 +2,9 @@ import cv2 as cv
 import numpy as np
 
 from pathlib import Path
+from cv2 import DMatch
 from cv2.typing import MatLike
-from typing import Tuple
+from typing import Tuple, List
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 
@@ -102,14 +103,7 @@ class ObjectDetector:
             # many false matches (FPs) where the difference between the best and second-
             # best is not significant.
             matches = self.matcher.knnMatch(desc_query, desc_test, k=2)
-
-            # Lowe's ratio test. You can think of this as filtering out noisy, ambiguous
-            # matches. When writing the report, maybe we should discuss the empirical 
-            # trade-off between false positives & true negatives by varying this threshold.
-            good_matches = []
-            for first, second in matches:
-                if first.distance / second.distance < lowe_ratio_test_threshold:
-                    good_matches.append(first)
+            good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
 
             if len(good_matches) <= min_match_count:
                 print(f"Skipping query image {img_path}. Not enough good matches found - " + \
@@ -147,16 +141,9 @@ class ObjectDetector:
                 continue
             
             if draw:
-                draw_params = {
-                    "matchColor": (0, 255, 0), # Draw matches in green.
-                    "singlePointColor": None,
-                    "matchesMask": matches_mask, # Only draw inliers.
-                    "flags": 2,
-                }
-
                 matches_img = cv.drawMatches(
                     query_img, kp_query, polyline_test_img, kp_test, good_matches, 
-                    None, **draw_params)
+                    None, (0, 255, 0), None, matches_mask, 2)
                 
                 plt.imshow(matches_img)
                 plt.show()
@@ -164,3 +151,20 @@ class ObjectDetector:
             detections.append((img_path, axis_aligned_bounding_box(oriented_bounding_box)))
 
         return detections
+    
+    def _perform_lowes_ratio_test(
+        self, 
+        matches: List[Tuple[DMatch, DMatch]],
+        lowe_ratio_test_threshold: float
+    ) -> List[DMatch]:
+        """
+        Filters out noisy, ambiguous matches using Lowe's ratio test.
+
+        When writing the report, maybe we should discuss the empirical trade-off between
+        false positives & true negatives and how varying this threshold affects them.
+        """
+        return [ 
+            first
+            for first, second in matches
+            if first.distance / second.distance < lowe_ratio_test_threshold
+        ]

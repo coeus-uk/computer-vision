@@ -28,7 +28,9 @@ Task1 TODO:
 
 **Todo:**
 
-1. SIFT hyperparameters.
+1. Implement a keypoint matching algorithm.
+2. Implement `findHomography`
+3. Implement `RANSAC`
 
 ## Running locally
 1. Install python etc
