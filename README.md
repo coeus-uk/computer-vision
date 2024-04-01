@@ -24,6 +24,12 @@ Task1 TODO:
 7. Post processing - I reckon we will need something like non-max suppression to arbitrate between ovelapping bounding boxes.
 8. Evaluate - Use the annotations as a ground truth and use a comparison function to calculate metrics like accuracy, precision, f1, etc.
 
+### Task 3
+
+**Todo:**
+
+1. SIFT hyperparameters.
+
 ## Running locally
 1. Install python etc
 2. (Optional) setup venv in '.venv' folder so that jupyter knows it exists
