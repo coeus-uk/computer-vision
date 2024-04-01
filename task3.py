@@ -42,15 +42,6 @@ class ImageDataset:
             raise StopIteration
         
 
-@dataclass
-class Match:
-
-    query_idx: int
-    train_idx: int
-    distance: float
-    img_idx: int = None
-
-
 class BruteForceMatcher:
 
     def knn_match(
@@ -58,7 +49,7 @@ class BruteForceMatcher:
         query_descriptors: np.ndarray, 
         train_descriptors: np.ndarray,
         k: int
-    ) -> List[Tuple[Match, ...]]:
+    ) -> List[Tuple[DMatch, ...]]:
         matches = []
         
         for q_idx, q_desc in enumerate(query_descriptors):
@@ -70,10 +61,11 @@ class BruteForceMatcher:
 
             # Find the k closest matches
             k_closest = tuple(
-                Match(
+                DMatch(
                     q_idx,
                     idx_sorted[i],
-                    distances[idx_sorted[i]]
+                    None,
+                    distances[idx_sorted[i]],
                 )
                 for i in range(k)
             )
@@ -121,7 +113,7 @@ class ObjectDetector:
         self.query_images = query_images
 
         self.sift = cv.SIFT.create(**sift_hyperparams)
-        self.matcher = cv.FlannBasedMatcher(flann_index_params, flann_search_params)
+        self.matcher = BruteForceMatcher()
 
     def detect(
         self, 
@@ -149,7 +141,7 @@ class ObjectDetector:
             # significantly closer than the second best match. This helps to filter out
             # many false matches (FPs) where the difference between the best and second-
             # best is not significant.
-            matches = self.matcher.knnMatch(desc_query, desc_test, k=2)
+            matches = self.matcher.knn_match(desc_query, desc_test, k=2)
             good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
 
             # We require at least `min_match_count` good matches to be present to find the
@@ -205,7 +197,7 @@ class ObjectDetector:
     
     def _perform_lowes_ratio_test(
         self, 
-        matches: List[Tuple[DMatch, DMatch]],
+        matches: List[Tuple[DMatch, ...]],
         lowe_ratio_test_threshold: float
     ) -> List[DMatch]:
         """
