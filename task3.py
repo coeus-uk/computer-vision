@@ -38,6 +38,25 @@ class ImageDataset:
             return cv.imread(str(img_path)), img_path
         else:
             raise StopIteration
+        
+
+def axis_aligned_bounding_box(oriented_bounding_box: np.ndarray) -> Tuple[int, int, int, int]:
+    """
+    Converts an oriented bounding box (OBB) to an axis-aligned bounding box (AABB).
+
+    An AABB is the simplest form of bounding box, where the edges of the box are
+    aligned with the axes of the co-ordinate system in which it is defined. That is,
+    the sides of the box are parallel to the co-ordinate axes.
+
+    In contrast, an OBB allows for the rotation of the box and is not constrained
+    to be aligned with the axes.
+    """
+    x = oriented_bounding_box[:, 0, 0]
+    y = oriented_bounding_box[:, 0, 1]
+    min_x, max_x = min(x), max(x)
+    min_y, max_y = min(y), max(y)
+
+    return (min_x, min_y, max_x, max_y)
 
 
 class ObjectDetector:
@@ -56,7 +75,14 @@ class ObjectDetector:
         self.sift = cv.SIFT.create(**sift_hyperparams)
         self.matcher = cv.FlannBasedMatcher(flann_index_params, flann_search_params)
 
-    def detect(self, test_img: MatLike, lowe_ratio_test_threshold: float = 0.7, min_match_count: int = 10):
+    def detect(
+        self, 
+        test_img: MatLike, 
+        draw: bool = True, 
+        lowe_ratio_test_threshold: float = 0.7, 
+        min_match_count: int = 10
+    ):
+        detections = []
         kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
 
         for query_img, img_path in self.query_images:
@@ -85,44 +111,56 @@ class ObjectDetector:
                 if first.distance / second.distance < lowe_ratio_test_threshold:
                     good_matches.append(first)
 
-            if len(good_matches) > min_match_count:
-                try:
-                    print(f"Query image {img_path} yields enough good matches - " + \
-                          f"{len(good_matches)}/{min_match_count}. Finding transform...")
-                    source_points = np.array(
-                        [kp_query[m.queryIdx].pt for m in good_matches], dtype=np.float32
-                    ).reshape(-1,1,2)
-                    dest_points = np.array(
-                        [kp_test[m.trainIdx].pt for m in good_matches], dtype=np.float32
-                    ).reshape(-1,1,2)
-
-                    # We need to implement `findHomography`, `RANSAC`. This line finds inliers.
-                    M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
-                    matches_mask = mask.ravel().tolist()
-
-                    h, w, c = query_img.shape
-                    points = np.array(
-                        [[0,0],[0,h-1],[w-1,h-1],[w-1,0]], dtype=np.float32).reshape(-1,1,2)
-                    destination = cv.perspectiveTransform(points, M)
-
-                    polyline_test_img = cv.polylines(
-                        test_img.copy(), [np.int32(destination)], True, 255, 3, cv.LINE_AA)
-                except:
-                    print(f"An exception was raised while handling query image {img_path}")
-                    continue
-            else:
+            if len(good_matches) <= min_match_count:
                 print(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
                 continue
 
-            draw_params = {
-                "matchColor": (0, 255, 0), # Draw matches in green.
-                "singlePointColor": None,
-                "matchesMask": matches_mask, # Only draw inliers.
-                "flags": 2,
-            }
+            try:
+                print(f"Query image {img_path} yields enough good matches - " + \
+                        f"{len(good_matches)}/{min_match_count}. Finding transform...")
+                
+                source_points = np.float32(
+                    [kp_query[m.queryIdx].pt for m in good_matches]
+                ).reshape(-1,1,2)
+                dest_points = np.float32(
+                    [kp_test[m.trainIdx].pt for m in good_matches]
+                ).reshape(-1,1,2)
 
-            matches_img = cv.drawMatches(
-                query_img, kp_query, polyline_test_img, kp_test, good_matches, None, **draw_params)
-            plt.imshow(matches_img)
-            plt.show()
+                # TODO: implement `findHomography`, `RANSAC`. This line finds inliers.
+                M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
+                matches_mask = mask.ravel().tolist()
+
+                # Define the corner points of the query image.
+                h, w, _ = query_img.shape
+                query_corners = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
+                
+                # Apply the homography matrix to transform the corner points of the
+                # query image to the co-ordinate system of the test image.
+                destination = cv.perspectiveTransform(query_corners, M)
+                oriented_bounding_box = np.int32(destination)
+
+                polyline_test_img = cv.polylines(
+                    test_img.copy(), [oriented_bounding_box], True, 255, 3, cv.LINE_AA)
+            except:
+                print(f"An exception was raised while handling query image {img_path}")
+                continue
+            
+            if draw:
+                draw_params = {
+                    "matchColor": (0, 255, 0), # Draw matches in green.
+                    "singlePointColor": None,
+                    "matchesMask": matches_mask, # Only draw inliers.
+                    "flags": 2,
+                }
+
+                matches_img = cv.drawMatches(
+                    query_img, kp_query, polyline_test_img, kp_test, good_matches, 
+                    None, **draw_params)
+                
+                plt.imshow(matches_img)
+                plt.show()
+
+            detections.append((img_path, axis_aligned_bounding_box(oriented_bounding_box)))
+
+        return detections
