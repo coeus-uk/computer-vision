@@ -5,6 +5,7 @@ from pathlib import Path
 from cv2 import DMatch
 from cv2.typing import MatLike
 from typing import Tuple, List
+from dataclasses import dataclass
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 
@@ -40,6 +41,52 @@ class ImageDataset:
         else:
             raise StopIteration
         
+
+@dataclass
+class Match:
+
+    query_idx: int
+    train_idx: int
+    distance: float
+    img_idx: int = None
+
+
+class BruteForceMatcher:
+
+    def knn_match(
+        self, 
+        query_descriptors: np.ndarray, 
+        train_descriptors: np.ndarray,
+        k: int
+    ) -> List[Tuple[Match, ...]]:
+        matches = []
+        
+        for q_idx, q_desc in enumerate(query_descriptors):
+            distances = np.array(
+                [self.distance(q_desc, t_desc) for t_desc in train_descriptors]
+            )
+            # Argsort in ascending order.
+            idx_sorted = np.argsort(distances)
+
+            # Find the k closest matches
+            k_closest = tuple(
+                Match(
+                    q_idx,
+                    idx_sorted[i],
+                    distances[idx_sorted[i]]
+                )
+                for i in range(k)
+            )
+            matches.append(k_closest)
+
+        return matches
+
+    def distance(self, vec1: np.ndarray, vec2: np.ndarray):
+        """
+        Calculates the Euclidean distance between two vectors.
+        """
+        return np.linalg.norm(vec1 - vec2)
+
 
 def axis_aligned_bounding_box(oriented_bounding_box: np.ndarray) -> Tuple[int, int, int, int]:
     """
@@ -105,6 +152,8 @@ class ObjectDetector:
             matches = self.matcher.knnMatch(desc_query, desc_test, k=2)
             good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
 
+            # We require at least `min_match_count` good matches to be present to find the
+            # object.
             if len(good_matches) <= min_match_count:
                 print(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
@@ -114,6 +163,7 @@ class ObjectDetector:
                 print(f"Query image {img_path} yields enough good matches - " + \
                         f"{len(good_matches)}/{min_match_count}. Finding transform...")
                 
+                # Extract the locations of matched keypoints in both images.
                 source_points = np.float32(
                     [kp_query[m.queryIdx].pt for m in good_matches]
                 ).reshape(-1,1,2)
@@ -121,7 +171,8 @@ class ObjectDetector:
                     [kp_test[m.trainIdx].pt for m in good_matches]
                 ).reshape(-1,1,2)
 
-                # TODO: implement `findHomography`, `RANSAC`. This line finds inliers.
+                # `findHomography` needs at least four correct points to find the
+                # perspective transformation.
                 M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
                 matches_mask = mask.ravel().tolist()
 
