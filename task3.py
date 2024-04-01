@@ -59,7 +59,7 @@ class BruteForceMatcher:
             # Argsort in ascending order.
             idx_sorted = np.argsort(distances)
 
-            # Find the k closest matches
+            # Find the k closest matches.
             k_closest = tuple(
                 DMatch(
                     q_idx,
@@ -73,11 +73,70 @@ class BruteForceMatcher:
 
         return matches
 
-    def distance(self, vec1: np.ndarray, vec2: np.ndarray):
+    def distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Calculates the Euclidean distance between two vectors.
         """
         return np.linalg.norm(vec1 - vec2)
+
+
+class RANSAC:
+
+    def __init__(self, reprojection_theshold: float):
+        self.reprojection_threshold = reprojection_theshold
+
+    def find_homography(self, src_points: np.ndarray, dst_points: np.ndarray):
+
+        pass
+
+
+@dataclass
+class AlignedBoundingBox:
+    """
+    Axis-aligned bounding box (AABB).
+
+    An AABB is the simplest form of bounding box, where the edges of the box are
+    aligned with the axes of the co-ordinate system in which it is defined. That is,
+    the sides of the box are parallel to the co-ordinate axes.
+    """
+
+    points: np.ndarray
+
+
+class BoundingBox:
+    """
+    Oriented bounding box (OBB).
+
+    An OBB is not constrained to be aligned with the axes. That is, its edges are not
+    necessarily parallel to the co-ordinate axes.
+    """
+
+    def __init__(self, oriented_points: np.ndarray):
+        self.points = oriented_points
+
+    def align_with_axis(self) -> AlignedBoundingBox:
+        """
+        Converts an oriented bounding box (OBB) to an axis-aligned bounding box (AABB).
+
+        An AABB is the simplest form of bounding box, where the edges of the box are
+        aligned with the axes of the co-ordinate system in which it is defined. That is,
+        the sides of the box are parallel to the co-ordinate axes.
+
+        In contrast, an OBB allows for the rotation of the box and is not constrained
+        to be aligned with the axes.
+        """
+        x = self.points[:, 0, 0]
+        y = self.points[:, 0, 1]
+
+        axis_aligned_points = np.array([min(x), min(y), max(x), max(y)])
+        return AlignedBoundingBox(axis_aligned_points)
+
+
+@dataclass
+class Detection:
+
+    img_path: Path
+    bounding_box: BoundingBox
 
 
 def axis_aligned_bounding_box(oriented_bounding_box: np.ndarray) -> Tuple[int, int, int, int]:
@@ -107,8 +166,6 @@ class ObjectDetector:
             self, 
             query_images: ImageDataset, 
             sift_hyperparams: dict,
-            flann_index_params: dict,
-            flann_search_params: dict,
         ):
         self.query_images = query_images
 
@@ -121,7 +178,7 @@ class ObjectDetector:
         draw: bool = True, 
         lowe_ratio_test_threshold: float = 0.7, 
         min_match_count: int = 10
-    ):
+    ) -> List[Detection]:
         detections = []
         kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
 
@@ -141,11 +198,11 @@ class ObjectDetector:
             # significantly closer than the second best match. This helps to filter out
             # many false matches (FPs) where the difference between the best and second-
             # best is not significant.
-            matches = self.matcher.knn_match(desc_query, desc_test, k=2)
-            good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
+            noisy_matches = self.matcher.knn_match(desc_query, desc_test, k=2)
+            good_matches = self._perform_lowes_ratio_test(noisy_matches, lowe_ratio_test_threshold)
 
-            # We require at least `min_match_count` good matches to be present to find the
-            # object.
+            # We require at least `min_match_count` good matches to be present to consider
+            # this query image present in our test image.
             if len(good_matches) <= min_match_count:
                 print(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
@@ -177,21 +234,22 @@ class ObjectDetector:
                 destination = cv.perspectiveTransform(query_corners, M)
                 oriented_bounding_box = np.int32(destination)
 
-                polyline_test_img = cv.polylines(
+                if draw:
+                    polyline_test_img = cv.polylines(
                     test_img.copy(), [oriented_bounding_box], True, 255, 3, cv.LINE_AA)
+                    
+                    matches_img = cv.drawMatches(
+                        query_img, kp_query, polyline_test_img, kp_test, good_matches, 
+                        None, (0, 255, 0), None, matches_mask, 2)
+                    
+                    plt.imshow(matches_img)
+                    plt.show()
             except:
                 print(f"An exception was raised while handling query image {img_path}")
                 continue
-            
-            if draw:
-                matches_img = cv.drawMatches(
-                    query_img, kp_query, polyline_test_img, kp_test, good_matches, 
-                    None, (0, 255, 0), None, matches_mask, 2)
-                
-                plt.imshow(matches_img)
-                plt.show()
 
-            detections.append((img_path, axis_aligned_bounding_box(oriented_bounding_box)))
+            detection = Detection(img_path, BoundingBox(oriented_bounding_box).align_with_axis())
+            detections.append(detection)
 
         return detections
     

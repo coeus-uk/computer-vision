@@ -28,9 +28,9 @@ Task1 TODO:
 
 **Todo:**
 
-1. Implement a keypoint matching algorithm.
-2. Implement `findHomography`
-3. Implement `RANSAC`
+1. [x] Implement a feature descriptor matching algorithm.
+- E.g., brute force matching using KNN
+2. [ ] Implement `RANSAC`
 
 ## Running locally
 1. Install python etc
