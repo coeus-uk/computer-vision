@@ -2,12 +2,26 @@ import cv2 as cv
 import numpy as np
 
 from pathlib import Path
-from cv2 import DMatch
+from cv2 import DMatch, SIFT
 from cv2.typing import MatLike
-from typing import Tuple, List
 from dataclasses import dataclass
 from typing_extensions import Self
+from abc import ABC, abstractmethod
 from matplotlib import pyplot as plt
+from typing import Tuple, List, Callable
+
+
+def squared_error_loss(truth: np.ndarray, prediction: np.ndarray) -> np.ndarray:
+    """
+    Calculates the point-wise squared difference of two vectors.
+    """
+    return (truth - prediction) ** 2
+
+def euclidean_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
+    """
+    Calculates the Euclidean distance between two vectors.
+    """
+    return np.linalg.norm(vec1 - vec2)
 
 
 class ImageDataset:
@@ -40,21 +54,20 @@ class ImageDataset:
             return cv.imread(str(img_path)), img_path
         else:
             raise StopIteration
-        
+
 
 class BruteForceMatcher:
 
-    def knn_match(
-        self, 
-        query_descriptors: np.ndarray, 
-        train_descriptors: np.ndarray,
-        k: int
-    ) -> List[Tuple[DMatch, ...]]:
+    def __init__(self, distance_metric: Callable[[np.ndarray, np.ndarray], float]):
+        self.distance = distance_metric
+
+    def knn_match(self, src_vecs: np.ndarray, dst_vecs: np.ndarray, k: int) -> List[Tuple[DMatch, ...]]:
         matches = []
         
-        for q_idx, q_desc in enumerate(query_descriptors):
+        # Compute the distance between every pairing. Keep only the closest.
+        for s_idx, s_vec in enumerate(src_vecs):
             distances = np.array(
-                [self.distance(q_desc, t_desc) for t_desc in train_descriptors]
+                [self.distance(s_vec, d_vec) for d_vec in dst_vecs]
             )
             # Argsort in ascending order.
             idx_sorted = np.argsort(distances)
@@ -62,7 +75,7 @@ class BruteForceMatcher:
             # Find the k closest matches.
             k_closest = tuple(
                 DMatch(
-                    q_idx,
+                    s_idx,
                     idx_sorted[i],
                     None,
                     distances[idx_sorted[i]],
@@ -73,21 +86,123 @@ class BruteForceMatcher:
 
         return matches
 
-    def distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """
-        Calculates the Euclidean distance between two vectors.
-        """
-        return np.linalg.norm(vec1 - vec2)
 
+class IModel(ABC):
 
-class RANSAC:
-
-    def __init__(self, reprojection_theshold: float):
-        self.reprojection_threshold = reprojection_theshold
-
-    def find_homography(self, src_points: np.ndarray, dst_points: np.ndarray):
-
+    @abstractmethod
+    def fit(self, src, dst):
         pass
+
+    @abstractmethod
+    def transform(self, src):
+        pass
+
+    @abstractmethod
+    def reset(self):
+        pass
+
+
+class RANSAC(IModel):
+
+    def __init__(
+            self, 
+            min_datapoints: int, 
+            max_iterations: int, 
+            threshold: float, 
+            model_cls: IModel, 
+            loss: Callable[[np.ndarray, np.ndarray], np.ndarray],
+            model_hyperparams: dict,
+            ):
+        self.min_datapoints = min_datapoints
+        self.max_iterations = max_iterations
+        self.threshold = threshold
+        self.model_cls = model_cls
+        self.loss = loss
+        self.model_hyperparams = model_hyperparams
+        self.best_model: IModel = None
+        self.max_inliers = 0
+
+    def fit(self, src: np.ndarray, dst: np.ndarray):
+        assert(src.shape == dst.shape)
+        num_points = src.shape[1]
+
+        for iteration in range(self.max_iterations):
+            permuted_idxs = np.random.permutation(num_points)
+
+            sample_idxs = permuted_idxs[:self.min_datapoints]
+            src_samples = src[:, sample_idxs]
+            dst_samples = dst[:, sample_idxs]
+
+            model = self.model_cls(**self.model_hyperparams)
+            model = model.fit(src_samples, dst_samples)
+
+            remaining_idxs = permuted_idxs[self.min_datapoints:]
+            src_non_samples = src[:, remaining_idxs]
+            dst_non_samples = dst[:, remaining_idxs]
+
+            losses = self.loss(dst_non_samples, model.transform(src_non_samples))
+            within_threshold = losses < self.threshold
+
+            inlier_idxs = remaining_idxs[within_threshold]
+
+            if len(inlier_idxs) > self.max_inliers:
+                self.max_inliers = len(inlier_idxs)
+
+                inlier_idxs = np.hstack([sample_idxs, inlier_idxs])
+                src_inliers = src[:, inlier_idxs]
+                dst_inliers = dst[:, inlier_idxs]
+
+                better_model = self.model_cls(**self.model_hyperparams)
+                better_model.fit(src_inliers, dst_inliers)
+
+                self.best_model = better_model
+
+    def transform(self, src: np.ndarray) -> np.ndarray:
+        return self.best_model.transform(src)
+    
+    def reset(self):
+        self.best_model = None
+        self.max_inliers = 0
+
+
+class DirectLinearTransformer(IModel):
+
+    def __init__(self):
+        self.reset()
+
+    def fit(self, src: np.ndarray, dst: np.ndarray) -> Self:
+        """
+        Estimates a 2D homographic transformation using a generalisation of the four-
+        point algorithm.
+
+        Assumes that `src` and `dst` are arrays of homogeneous co-ordinates that have 
+        shape `(3, n)`, where `n` is the number of points.
+        """
+        assert(src.shape == dst.shape)
+        num_points = src.shape[1]
+
+        # Stack the equations into a homogeneous linear system.
+        A = np.zeros((2*num_points, 9))
+        for i in range(num_points):
+            A[2*i, 0:3] = src[:, i]
+            A[2*i, 6:9] = -dst[0, i] * src[:, i]
+            A[2*i+1, 3:6] = src[:, i]
+            A[2*i+1, 6:9] = -dst[1, i] * src[:, i]
+
+        # Solve the homogeneous linear system using SVD
+        U, D, Vt = np.linalg.svd(A)
+        H = Vt[-1, :].reshape(3, 3)
+
+        # Normalise the solution to ensure H[2,2] == 1
+        self.homography = H / H[2, 2]
+
+        return self
+
+    def transform(self, src: np.ndarray) -> np.ndarray:
+        return self.homography @ src
+    
+    def reset(self):
+        self.homography = np.zeros((3,3))
 
 
 @dataclass
@@ -139,58 +254,37 @@ class Detection:
     bounding_box: BoundingBox
 
 
-def axis_aligned_bounding_box(oriented_bounding_box: np.ndarray) -> Tuple[int, int, int, int]:
-    """
-    Converts an oriented bounding box (OBB) to an axis-aligned bounding box (AABB).
-
-    An AABB is the simplest form of bounding box, where the edges of the box are
-    aligned with the axes of the co-ordinate system in which it is defined. That is,
-    the sides of the box are parallel to the co-ordinate axes.
-
-    In contrast, an OBB allows for the rotation of the box and is not constrained
-    to be aligned with the axes.
-    """
-    x = oriented_bounding_box[:, 0, 0]
-    y = oriented_bounding_box[:, 0, 1]
-    min_x, max_x = min(x), max(x)
-    min_y, max_y = min(y), max(y)
-
-    return (min_x, min_y, max_x, max_y)
-
-
 class ObjectDetector:
     """
     Object detector using SIFT keypoint localisation and descriptors.
     """
-    def __init__(
-            self, 
-            query_images: ImageDataset, 
-            sift_hyperparams: dict,
-        ):
+    def __init__(self, query_images: ImageDataset, sift_hyperparams: dict):
         self.query_images = query_images
 
-        self.sift = cv.SIFT.create(**sift_hyperparams)
-        self.matcher = BruteForceMatcher()
+        self.sift = SIFT.create(**sift_hyperparams)
+        self.matcher = BruteForceMatcher(euclidean_distance)
+        self.ransac = RANSAC(4, 14, 5, DirectLinearTransformer, squared_error_loss, {})
 
     def detect(
-        self, 
-        test_img: MatLike, 
-        draw: bool = True, 
-        lowe_ratio_test_threshold: float = 0.7, 
-        min_match_count: int = 10
-    ) -> List[Detection]:
+            self, 
+            train_img: MatLike, 
+            draw: bool = True, 
+            lowe_ratio_test_threshold: float = 0.7, 
+            min_match_count: int = 10
+            ) -> List[Detection]:
+        
         detections = []
-        kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
+        kp_train, desc_train = self.sift.detectAndCompute(train_img, None)
 
         for query_img, img_path in self.query_images:
             # Extract keypoints and generate descriptors using SIFT.
             kp_query, desc_query = self.sift.detectAndCompute(query_img, None)
 
             # For each descriptor in `desc_query`, find the `k` closest descriptors in 
-            # `desc_test`. We choose `k=2` for use in applying Lowe's ratio test, which
+            # `desc_train`. We choose `k=2` for use in applying Lowe's ratio test, which
             # is a method to filter out poor matches (outliers?). Lowe's ratio test is
             # a heuristic to select good matches between two sets of features. By asking
-            # `knnMatch` to find the 2 nearest neighbours, we can apply this test, which
+            # `knn_match` to find the 2 nearest neighbours, we can apply this test, which
             # compares the distance of the closest neighbour to the second closest
             # neighbour. The test asserts that if the ratio of the closest distance to
             # the second closest distance is below acertain threshold (e.g., 0.7), then
@@ -198,11 +292,11 @@ class ObjectDetector:
             # significantly closer than the second best match. This helps to filter out
             # many false matches (FPs) where the difference between the best and second-
             # best is not significant.
-            noisy_matches = self.matcher.knn_match(desc_query, desc_test, k=2)
+            noisy_matches = self.matcher.knn_match(desc_query, desc_train, k=2)
             good_matches = self._perform_lowes_ratio_test(noisy_matches, lowe_ratio_test_threshold)
 
             # We require at least `min_match_count` good matches to be present to consider
-            # this query image present in our test image.
+            # this query image present in our train image.
             if len(good_matches) <= min_match_count:
                 print(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
@@ -213,33 +307,34 @@ class ObjectDetector:
                         f"{len(good_matches)}/{min_match_count}. Finding transform...")
                 
                 # Extract the locations of matched keypoints in both images.
-                source_points = np.float32(
-                    [kp_query[m.queryIdx].pt for m in good_matches]
+                src_points = np.float32([kp_query[m.queryIdx].pt for m in good_matches]
                 ).reshape(-1,1,2)
-                dest_points = np.float32(
-                    [kp_test[m.trainIdx].pt for m in good_matches]
+                dst_points = np.float32([kp_train[m.trainIdx].pt for m in good_matches]
                 ).reshape(-1,1,2)
 
                 # `findHomography` needs at least four correct points to find the
                 # perspective transformation.
-                M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
+                M, mask = cv.findHomography(src_points, dst_points, cv.RANSAC, 5.0)
                 matches_mask = mask.ravel().tolist()
+
+                # M, mask = self.ransac.find_homography(src_points, dst_points)
+                # matches_mask = None # FIXME
 
                 # Define the corner points of the query image.
                 h, w, _ = query_img.shape
                 query_corners = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
                 
                 # Apply the homography matrix to transform the corner points of the
-                # query image to the co-ordinate system of the test image.
+                # query image to the co-ordinate system of the train image.
                 destination = cv.perspectiveTransform(query_corners, M)
-                oriented_bounding_box = np.int32(destination)
+                oriented_bounding_points = np.int32(destination)
 
                 if draw:
-                    polyline_test_img = cv.polylines(
-                    test_img.copy(), [oriented_bounding_box], True, 255, 3, cv.LINE_AA)
+                    polyline_train_img = cv.polylines(
+                    train_img.copy(), [oriented_bounding_points], True, 255, 3, cv.LINE_AA)
                     
                     matches_img = cv.drawMatches(
-                        query_img, kp_query, polyline_test_img, kp_test, good_matches, 
+                        query_img, kp_query, polyline_train_img, kp_train, good_matches, 
                         None, (0, 255, 0), None, matches_mask, 2)
                     
                     plt.imshow(matches_img)
@@ -248,16 +343,18 @@ class ObjectDetector:
                 print(f"An exception was raised while handling query image {img_path}")
                 continue
 
-            detection = Detection(img_path, BoundingBox(oriented_bounding_box).align_with_axis())
+            axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
+            detection = Detection(img_path, axis_aligned_bbox)
+
             detections.append(detection)
 
         return detections
     
     def _perform_lowes_ratio_test(
-        self, 
-        matches: List[Tuple[DMatch, ...]],
-        lowe_ratio_test_threshold: float
-    ) -> List[DMatch]:
+            self, 
+            matches: List[Tuple[DMatch, ...]],
+            lowe_ratio_test_threshold: float
+            ) -> List[DMatch]:
         """
         Filters out noisy, ambiguous matches using Lowe's ratio test.
 
