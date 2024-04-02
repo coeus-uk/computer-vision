@@ -15,7 +15,7 @@ def squared_error_loss(truth: np.ndarray, prediction: np.ndarray) -> np.ndarray:
     """
     Calculates the point-wise squared difference of two vectors.
     """
-    return (truth - prediction) ** 2
+    return np.sum((truth - prediction) ** 2, axis=0)
 
 def euclidean_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
     """
@@ -157,6 +157,9 @@ class RANSAC(IModel):
 
                 self.best_model = better_model
 
+        # TODO: Return mask of outliers
+        return self, ()
+
     def transform(self, src: np.ndarray) -> np.ndarray:
         return self.best_model.transform(src)
     
@@ -199,7 +202,10 @@ class DirectLinearTransformer(IModel):
         return self
 
     def transform(self, src: np.ndarray) -> np.ndarray:
-        return self.homography @ src
+        unnormalised = self.homography @ src
+        normalised = unnormalised / unnormalised[2]
+
+        return normalised
     
     def reset(self):
         self.homography = np.zeros((3,3))
@@ -306,28 +312,26 @@ class ObjectDetector:
                 print(f"Query image {img_path} yields enough good matches - " + \
                         f"{len(good_matches)}/{min_match_count}. Finding transform...")
                 
-                # Extract the locations of matched keypoints in both images.
-                src_points = np.float32([kp_query[m.queryIdx].pt for m in good_matches]
-                ).reshape(-1,1,2)
-                dst_points = np.float32([kp_train[m.trainIdx].pt for m in good_matches]
-                ).reshape(-1,1,2)
+                # Extract the locations of matched keypoints in both images and convert
+                # them to homogeneous co-ordinates.
+                src_points = np.float32([kp_query[m.queryIdx].pt + (1,) for m in good_matches]).T
+                dst_points = np.float32([kp_train[m.trainIdx].pt + (1,) for m in good_matches]).T
 
-                # `findHomography` needs at least four correct points to find the
-                # perspective transformation.
-                M, mask = cv.findHomography(src_points, dst_points, cv.RANSAC, 5.0)
-                matches_mask = mask.ravel().tolist()
-
-                # M, mask = self.ransac.find_homography(src_points, dst_points)
-                # matches_mask = None # FIXME
+                # Use RANSAC to reject outliers and estimate a homography for the
+                # the remaining sets of inliers.
+                self.ransac.reset()
+                model, mask = self.ransac.fit(src_points, dst_points) 
+                matches_mask = None # TODO: Write matches_mask
 
                 # Define the corner points of the query image.
                 h, w, _ = query_img.shape
-                query_corners = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
+                query_corners = np.float32([[0,0,1],[0,h-1,1],[w-1,h-1,1],[w-1,0,1]]).T
                 
                 # Apply the homography matrix to transform the corner points of the
-                # query image to the co-ordinate system of the train image.
-                destination = cv.perspectiveTransform(query_corners, M)
-                oriented_bounding_points = np.int32(destination)
+                # query image to the co-ordinate system of the train image. Drop the
+                # homogeneous row.
+                destination = model.transform(query_corners)[:2]
+                oriented_bounding_points = np.int32(destination).T.reshape(-1, 1, 2)
 
                 if draw:
                     polyline_train_img = cv.polylines(
@@ -339,7 +343,7 @@ class ObjectDetector:
                     
                     plt.imshow(matches_img)
                     plt.show()
-            except:
+            except Exception as e:
                 print(f"An exception was raised while handling query image {img_path}")
                 continue
 
