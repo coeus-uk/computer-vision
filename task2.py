@@ -3,68 +3,144 @@ import cv2
 import numpy as np
 from scipy.signal import fftconvolve
 from pathlib import Path
-from copy import deepcopy
 from cv2.typing import MatLike
 from typing import Iterator
 
-MATCH_THRESHOLD = 0.8
+TEMPLATE_PYRAMID_SCALES = [5/8, 4/8, 3/8, 2/8, 1/8]
 
-def predict_all_templates(templates: list[tuple[str, list[MatLike]]],
-                          img: MatLike, 
-                          annotations: pd.DataFrame,
-                          dst: MatLike | None = None,
-                          num_pyramid_levels: int = 3) -> None:
+CCOEFF_NORMED_THRESHOLD = 0.8
+
+THRESHOLD_SCALE = 0.8
+
+THRESHOLDS = [
+    70000,
+    2000,
+    2000,
+    500,
+    100]
+# THRESHOLDS = [
+#     5.583934789155553e+18,
+#     4.315835850200041e+17,
+#     3.199918135465214e+16,
+#     2178193442070275.0,
+#     138047930383868.83
+# ]
+# THRESHOLDS = [
+#     0.95,
+#     0.93,
+#     0.9,
+#     0.85,
+#     0.8]
+
+def predict_all_templates(img_pyr: list[MatLike], 
+                        templates: list[tuple[str, list[MatLike]]]
+                        ) -> tuple[list[str], list[float], list[np.ndarray]]:
     """
     Predict bounding boxes for a number of templates in a given image.
     Calculate the error if a match is found.
     """
-    img_pyramid = laplacian_pyramid(deepcopy(img), num_pyramid_levels)
-    bounding_boxes = { row.classname: np.array([row.left, row.right, row.top, row.bottom])
-                      for row in annotations.itertuples() }
     
-    for (classname, template_pyr) in templates:
-        pred_bounds = predict_bounding_box(img_pyramid, template_pyr, dst)
-
-        if pred_bounds is None and classname not in bounding_boxes: 
-            print(f"{classname}\t| PASS | Correctly didn't match template")
+    classnames, scores, pred_boxes = [], [], []
+    for classname, template_pyr in templates:
+        matches = predict_bounding_box(img_pyr, template_pyr, classname)
+        first_match = next(matches, None)
+        if (first_match is None): 
+            # print(f"No match found for {classname}")
             continue
+        score, pred_box = first_match
+        classnames.append(classname)
+        scores.append(score)
+        pred_boxes.append(pred_box)
+    
+    return classnames, scores, pred_boxes
+       
 
-        if pred_bounds is None and classname in bounding_boxes:
-            print(f"{classname}\t| FAIL | Didn't match template when it existed")
-            continue
+def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike], 
+                         classname: str) -> Iterator[tuple[float, np.ndarray]]:
+    """
+    Use multi resolution template matching to match a given collection of 
+    tempaltes in an image. 
+    Returns the matches predicted bounding box as well as its score.
+    """
+    for template_layer in template_pyr:
+        template_h, template_w = template_layer.shape
+        for i_level, img_layer in enumerate(img_pyr):
+            img_h, img_w = img_layer.shape
 
-        annotated_bounds = bounding_boxes[classname]
-        if annotated_bounds is None:
-            print(f"{classname}\t| FAIL | Predicted template is not in the image. "
-                  + f"Predicted bounds: {pred_bounds}")
-            continue
+            # Skip levels where the template is larger than the image
+            if template_h > img_h or template_w > img_w: continue 
         
-        errors = np.abs(pred_bounds - annotated_bounds)
-        print(f"{classname}\t| PASS | errors [top, bot, left, right] ="
-                + f" {errors} | total error = {np.sum(errors)}")
+            # Perform template matching
+            result = cv2.matchTemplate(img_layer, template_layer,
+                                        cv2.TM_CCOEFF_NORMED) # <- this isn't allowed
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
-def predict_bounding_box(img_pyr: list[MatLike], 
-                         template_pyr: list[MatLike],
-                         dst: MatLike | None) -> np.ndarray | None:
+            score = max_val
+            pred_top_left = max_loc
+            if score > CCOEFF_NORMED_THRESHOLD:
+                img_sf = 2 ** i_level
+                left, top = pred_top_left
+                left, top = (int(left * img_sf), int(top * img_sf))
+                right = left + template_w
+                bot = top + template_h
+                pred_box = np.array([top, bot, left, right])
+                print(f"Match found for {classname} at level: {i_level} with score: {score} > 0.8, preds = {pred_box}")
+                yield (score, pred_box)
+
+def non_max_suppression(preds: list[np.ndarray], scores: list[float]) -> None:
     """
-    Predict the bounding box of a template in an image.
+    Applies non-maximal suppression to a list of bounding boxes.
+    Detects overlapping bounding boxes and discards the one with a lower score.
+    """
+    assert len(preds) == len(scores)
 
-    Return None when there is no match, otherwise return an array 
-    of positions making up the bounding box [top, bot, left, right]
+    boxes_to_remove = set()
+    for j, box in enumerate(preds):
+        for i, other_box in enumerate(preds):
+            if i == j: continue
+            iou = calculate_iou(box, other_box)
+            if (iou > 0 and scores[i] < scores[j]):
+                boxes_to_remove.add(i)
+
+    for i in sorted(boxes_to_remove, reverse=True):
+        preds.pop(i)
+        scores.pop(i)
+
+def calculate_iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
+    """
+    Calculate the intersection over area for two given bounding boxes
     """
 
-    assert len(img_pyr) == len(template_pyr)
-    
-    for (img, template) in zip(img_pyr, template_pyr):
-        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED) # <-- this is probably not allowed
-        matches = np.where(result >= MATCH_THRESHOLD)
-        if (matches[0].size > 0):
-            _, _, _, pred_top_left = cv2.minMaxLoc(result)
-            height, width = template.shape
-            pred_left, pred_top = pred_top_left
-            pred_right = pred_left + width
-            pred_bot = pred_top + height
-            preds = np.array([pred_top, pred_bot, pred_left, pred_right])
+    top_a, bot_a, left_a, right_a = box_a
+    top_b, bot_b, left_b, right_b = box_b
+
+    intersection_top = max(top_a, top_b)
+    intersection_left = max(left_a, left_b)
+    intersection_bot = min(bot_a, bot_b)
+    intersection_right = min(right_a, right_b)
+
+    intersection_width = intersection_right - intersection_left
+    intersection_height = intersection_bot - intersection_top
+    intersection_area = max(intersection_width, 0) * max(intersection_height, 0)
+
+    total_area_a = (right_a - left_a) * (bot_a - top_a)
+    total_area_b = (right_b - left_b) * (bot_b - top_b)
+
+    union_area = total_area_a + total_area_b - intersection_area
+    return intersection_area / union_area
+
+def annotate_predictions(img: MatLike, classnames: list[str],
+                         scores: list[int], pred_boxes: np.ndarray) -> None:
+    """
+    Draw a given collection of bounding boxes onto a destination image. 
+    """
+    black: cv2.Scalar = (0, 255, 0)
+    for classname, score, pred_box in zip(classnames, scores, pred_boxes):
+        top_left = (pred_box[2], pred_box[0])
+        bot_right = (pred_box[3], pred_box[1])
+        cv2.rectangle(img, top_left, bot_right, color=black, thickness=1)
+        cv2.putText(img, f"{classname}({score:.2f})", top_left, 
+                    cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=black)
 
 def correlate_ssd(img: np.ndarray, template: np.ndarray
                  ) -> np.ndarray:
@@ -90,8 +166,7 @@ def correlate_ssd(img: np.ndarray, template: np.ndarray
 
     return ssd
 
-def correlate_ssd_normed(img: np.ndarray, template: np.ndarray
-                        ) -> np.ndarray:
+def correlate_ssd_normed(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
     Calculate sum square difference along a sliding window 
     between an image and kernel.
@@ -100,10 +175,48 @@ def correlate_ssd_normed(img: np.ndarray, template: np.ndarray
     norm_template = (template - np.mean(template)) / np.std(template)
     return correlate_ssd(norm_image, norm_template)
 
+def template_pyramid_by_classname(dataset_folder: Path,
+                                  file_extension: str = ".png"
+                                  ) -> Iterator[tuple[str, list[MatLike]]]:
+    """
+    Load templates found in a given directory and return an iteratior over 
+    grouped classnames and template gaussian pyramids
+    """
+
+    # current_template = template.copy()
+    # template_pyr = [current_template]
+    # for scale in tempalte_scales:
+    #     new_width = int(template.shape[0] * scale)
+    #     new_height = int(template.shape[1] * scale)
+    #     current_template = cv2.resize(current_template, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    #     template_pyr.append(current_template)
+
+    image_paths = dataset_folder.glob(f"*{file_extension}")
+    images_paths_sorted = sorted(image_paths)
+    for path in images_paths_sorted:
+        template = cv2.imread(str(path))
+        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        
+        # Gaussian pyramid with custom scaling
+        width, height = template.shape
+        template_pyr = [template]
+        for scale in TEMPLATE_PYRAMID_SCALES:
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            template = cv2.resize(template,
+                                          (new_width, new_height),
+                                          interpolation=cv2.INTER_AREA)
+            template_pyr.append(template)
+        
+        # Annotations are prefixed by 2 numbers, the given dataset has 3.
+        classname = path.stem[1:] 
+
+        yield (classname, template_pyr)
+
 def laplacian_pyramid(img: MatLike, num_levels: int) -> list[MatLike]:
     """
     Builds an estimate for the laplacian pyramid of an image by using
-    the differences of Gaussian.
+    the difference of Gaussian method.
     Modifies `img` inplace, a copy should be passed in if that is not desired.
     """
     gauss_pyr = gaussian_pyrarmid(img, num_levels)

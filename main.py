@@ -3,7 +3,10 @@ import pandas as pd
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
+
 import task1
+import task2
 import utils
 
 
@@ -80,13 +83,24 @@ def testTask1(folderName: str) -> int:
     return total_error
 
 
-def testTask2(iconDir, testDir):
+def testTask2(iconDir: str, testDir: str):
     # assume that test folder name has a directory annotations with a list of csv files
     # load train images from iconDir and for each image from testDir, match it with each class from the iconDir to find the best match
     # For each predicted class, check accuracy with the annotations
     # Check and calculate the Intersection Over Union (IoU) score
     # based on the IoU determine accuracy, TruePositives, FalsePositives, FalseNegatives
-    return (Acc,TPR,FPR,FNR)
+    image_pyramid_levels = 5
+    images = task2.images_with_annotations(Path(testDir))
+    templates = task2.template_pyramid_by_classname(Path(iconDir, "png"))
+    templates = [(classname, pyr) for (classname, pyr) in templates]
+
+    for img, annotations in images:
+        img_pyr = task2.gaussian_pyrarmid(img, image_pyramid_levels)
+        classnames, scores, pred_boxes = task2.predict_all_templates(img_pyr, templates)
+        task2.non_max_suppression(pred_boxes, scores)
+        task2.annotate_predictions(img, classnames, scores, pred_boxes)
+
+    return None#(Acc,TPR,FPR,FNR)
 
 
 def testTask3(iconFolderName, testFolderName):
