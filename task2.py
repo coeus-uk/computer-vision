@@ -1,6 +1,7 @@
 import pandas as pd
 import cv2
 import numpy as np
+from scipy.signal import fftconvolve
 from pathlib import Path
 from copy import deepcopy
 from cv2.typing import MatLike
@@ -65,14 +66,39 @@ def predict_bounding_box(img_pyr: list[MatLike],
             pred_bot = pred_top + height
             preds = np.array([pred_top, pred_bot, pred_left, pred_right])
 
-            # Draw a rectangle around the matched region
-            if dst is not None:
-                pred_bot_right = (pred_right, pred_bot)
-                cv2.rectangle(dst, pred_top_left, pred_bot_right, (0, 255, 0), 1)
+def correlate_ssd(img: np.ndarray, template: np.ndarray
+                 ) -> np.ndarray:
+    """
+    Calculate sum square difference along a sliding window 
+    between an image and kernel.
+    """
+    # ssd = (a1 - a2)^2 + (b1 - b2)^2 + ...
+    # Recall that (a1 - a2)^2 = a1^2 + a2^2 - 2(a1)(a2)
+    # So, ssd = a1^2 + a2^2 - 2(a1)(a2) + b1^2 + b2^2 - 2(b1)(b2) + ...
+    #         = (a1^2 + b1^2 + ...) + (a2^2 + b2^2 + ...) - 2 * ((a1)(a2) + (b1)(b2) + ...)
+    # (a1^2 + b1^2 + ...) is a sliding sum over the square of the image
+    #  which is equivalent to a convolution of the image using a kernel of 1s
+    # (a2^2 + b2^2 + ...) is the sum of the square of template
+    # ((a1)(a2) + (b1)(b2) + ...) is the cross correlation of the template over the image
+    #  which is equivalent to the convolution of an inverted template over the image
 
-            return preds
-        
-    return None
+    # Thus ssd can be calculated as below.
+    sliding_sum_of_squares = fftconvolve(np.square(img), np.ones(template.shape), mode='valid')
+    cross_correlation = fftconvolve(img, template[::-1, ::-1], mode='valid')
+    sum_of_template_squares = np.sum(np.square(template))
+    ssd = sliding_sum_of_squares  + sum_of_template_squares - 2 * cross_correlation
+
+    return ssd
+
+def correlate_ssd_normed(img: np.ndarray, template: np.ndarray
+                        ) -> np.ndarray:
+    """
+    Calculate sum square difference along a sliding window 
+    between an image and kernel.
+    """
+    norm_image = (img - np.mean(img)) / np.std(img)
+    norm_template = (template - np.mean(template)) / np.std(template)
+    return correlate_ssd(norm_image, norm_template)
 
 def laplacian_pyramid(img: MatLike, num_levels: int) -> list[MatLike]:
     """
