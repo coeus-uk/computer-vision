@@ -83,7 +83,7 @@ def testTask1(folderName: str) -> int:
     return total_error
 
 
-def testTask2(iconDir: str, testDir: str):
+def testTask2(iconDir: str, testDir: str) -> tuple[float, float, float, float]:
     # assume that test folder name has a directory annotations with a list of csv files
     # load train images from iconDir and for each image from testDir, match it with each class from the iconDir to find the best match
     # For each predicted class, check accuracy with the annotations
@@ -93,14 +93,24 @@ def testTask2(iconDir: str, testDir: str):
     images = task2.images_with_annotations(Path(testDir))
     templates = task2.template_pyramid_by_classname(Path(iconDir, "png"))
     templates = [(classname, pyr) for (classname, pyr) in templates]
+    results: list[tuple[float, float, float, float]] = []
 
     for img, annotations in images:
         img_pyr = task2.gaussian_pyrarmid(img, image_pyramid_levels)
         classnames, scores, pred_boxes = task2.predict_all_templates(img_pyr, templates)
-        task2.non_max_suppression(pred_boxes, scores)
+        task2.non_max_suppression(pred_boxes, scores, classnames)
         task2.annotate_predictions(img, classnames, scores, pred_boxes)
+        preds = dict(zip(classnames, pred_boxes))
+        metrics = task2.evaluation_metrics(preds, annotations)
+        results.append(metrics)
 
-    return None#(Acc,TPR,FPR,FNR)
+    (acc, tpr, fpr, fnr) = [sum(values) / len(values) for values in zip(*results)]
+    print(f"Averave accuracy: {acc}")
+    print(f"Average true positive rate: {tpr}")
+    print(f"Average false positive rate: {fpr}")
+    print(f"Average false negative rate: {fnr} ")
+
+    return (acc, tpr, fpr, fnr)
 
 
 def testTask3(iconFolderName, testFolderName):
