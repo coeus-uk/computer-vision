@@ -12,12 +12,17 @@ CCOEFF_NORMED_THRESHOLD = 0.8
 
 THRESHOLD_SCALE = 0.8
 
+# 70000,
+# 2000,
+# 2000,
+# 500,
+# 100]
 THRESHOLDS = [
-    70000,
-    2000,
-    2000,
-    500,
-    100]
+    10000000,
+    5000000,
+    1500000,
+    165000,
+    100000]
 # THRESHOLDS = [
 #     5.583934789155553e+18,
 #     4.315835850200041e+17,
@@ -44,9 +49,7 @@ def predict_all_templates(img_pyr: list[MatLike],
     for classname, template_pyr in templates:
         matches = predict_bounding_box(img_pyr, template_pyr, classname)
         first_match = next(matches, None)
-        if (first_match is None): 
-            # print(f"No match found for {classname}")
-            continue
+        if (first_match is None): continue
         score, pred_box = first_match
         classnames.append(classname)
         scores.append(score)
@@ -56,13 +59,13 @@ def predict_all_templates(img_pyr: list[MatLike],
        
 
 def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike], 
-                         classname: str) -> Iterator[tuple[float, np.ndarray]]:
+                         classname: str, thresholds: list[int] = THRESHOLDS) -> Iterator[tuple[float, np.ndarray]]:
     """
     Use multi resolution template matching to match a given collection of 
     tempaltes in an image. 
     Returns the matches predicted bounding box as well as its score.
     """
-    for template_layer in template_pyr:
+    for t_level, template_layer in enumerate(template_pyr):
         template_h, template_w = template_layer.shape
         for i_level, img_layer in enumerate(img_pyr):
             img_h, img_w = img_layer.shape
@@ -73,38 +76,44 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike],
             # Perform template matching
             result = cv2.matchTemplate(img_layer, template_layer,
                                         cv2.TM_CCOEFF_NORMED) # <- this isn't allowed
+            # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_SQDIFF)
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
             score = max_val
             pred_top_left = max_loc
-            if score > CCOEFF_NORMED_THRESHOLD:
+            if score > CCOEFF_NORMED_THRESHOLD:#thresholds[t_level]:
                 img_sf = 2 ** i_level
                 left, top = pred_top_left
                 left, top = (int(left * img_sf), int(top * img_sf))
                 right = left + template_w
                 bot = top + template_h
                 pred_box = np.array([top, bot, left, right])
-                print(f"Match found for {classname} at level: {i_level} with score: {score} > 0.8, preds = {pred_box}")
+                # print(f"Match found for {classname} at level: {i_level} with score: {score} > 0.8, preds = {pred_box}")
                 yield (score, pred_box)
 
-def non_max_suppression(preds: list[np.ndarray], scores: list[float]) -> None:
+def non_max_suppression(preds: list[np.ndarray], scores: list[float],
+                        classnames: list[str]) -> None:
     """
     Applies non-maximal suppression to a list of bounding boxes.
     Detects overlapping bounding boxes and discards the one with a lower score.
     """
     assert len(preds) == len(scores)
+    
+    # Tolerance for very slight overlaps
+    iou_threshold = 0.005 
 
     boxes_to_remove = set()
     for j, box in enumerate(preds):
         for i, other_box in enumerate(preds):
             if i == j: continue
             iou = calculate_iou(box, other_box)
-            if (iou > 0 and scores[i] < scores[j]):
+            if (iou > iou_threshold and scores[i] < scores[j]):
                 boxes_to_remove.add(i)
 
     for i in sorted(boxes_to_remove, reverse=True):
         preds.pop(i)
         scores.pop(i)
+        classnames.pop(i)
 
 def calculate_iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
     """
@@ -182,15 +191,6 @@ def template_pyramid_by_classname(dataset_folder: Path,
     Load templates found in a given directory and return an iteratior over 
     grouped classnames and template gaussian pyramids
     """
-
-    # current_template = template.copy()
-    # template_pyr = [current_template]
-    # for scale in tempalte_scales:
-    #     new_width = int(template.shape[0] * scale)
-    #     new_height = int(template.shape[1] * scale)
-    #     current_template = cv2.resize(current_template, (new_width, new_height), interpolation=cv2.INTER_AREA)
-    #     template_pyr.append(current_template)
-
     image_paths = dataset_folder.glob(f"*{file_extension}")
     images_paths_sorted = sorted(image_paths)
     for path in images_paths_sorted:
@@ -199,7 +199,7 @@ def template_pyramid_by_classname(dataset_folder: Path,
         
         # Gaussian pyramid with custom scaling
         width, height = template.shape
-        template_pyr = [template]
+        template_pyr = []
         for scale in TEMPLATE_PYRAMID_SCALES:
             new_width = int(width * scale)
             new_height = int(height * scale)
@@ -239,10 +239,11 @@ def gaussian_pyrarmid(img: MatLike, num_levels: int) -> list[MatLike]:
     return pyramid
 
 def images_with_annotations(dataset_folder: Path
-                            ) -> Iterator[tuple[MatLike, pd.DataFrame]]:
+                            ) -> Iterator[tuple[MatLike, list[tuple[str, np.ndarray]]]]:
     """
     Provides an iterator over the image dataset.
-    It yields a tuple of the image along with the corresponding annotations.
+    It yields a tuple of the image along with the corresponding
+    annotated bounding boxes.
     """
     annotations_folder = Path(dataset_folder, "annotations")
     image_paths = Path(dataset_folder, "images").iterdir()
@@ -253,7 +254,9 @@ def images_with_annotations(dataset_folder: Path
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         csv_filename = Path(annotations_folder, path.stem).with_suffix(".csv")
         annotations = pd.read_csv(csv_filename)
-        yield (img, annotations)
+        template_bounds = [(row.classname, np.array([row.left, row.right, row.top, row.bottom])) 
+                           for row in annotations.itertuples()]
+        yield (img, template_bounds)
 
 def path_lexigraphical_order(path: Path) -> tuple[int, str]:
     """
@@ -264,27 +267,34 @@ def path_lexigraphical_order(path: Path) -> tuple[int, str]:
     path_str = str(path)
     return (len(path_str), path_str)
 
-def predict_bounding_boxes_cv2(img: MatLike, templates: list[np.ndarray], 
-                               template_bounds: list[np.ndarray]) -> None:
-    error = np.empty(len(templates))
+def evaluation_metrics(predicted_bounds: dict[str, np.ndarray], 
+                       annotated_bounds: list[tuple[str, np.ndarray]],
+                       pred_threshold: float = 0.95
+                       ) -> tuple[float, float, float, float]:
+    """
+    Calculates the accuracy, true positive rate, false positive rate,
+    and false negative rate given a collection of predicted bounding boxes 
+    and a colleciton of expected results.
+    """
+    num_tp, num_fp, num_fn = 0, 0, 0
+    num_boxes = len(annotated_bounds)
 
-    # Calculate bounding boxes of templates on image they are defined
-    for (i, (template, bounds)) in enumerate(zip(templates, template_bounds)):
-        result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
+    for classname, bound in annotated_bounds:
+        if classname not in predicted_bounds:
+            num_fn += 1
+            continue
 
-        # Calculate bounding box
-        _, _, _, pred_top_left = cv2.minMaxLoc(result)
-        height, width = template.shape
-        pred_left, pred_top = pred_top_left
-        pred_right = pred_left + width
-        pred_bot = pred_top + height
-        pred_bot_right = (pred_right, pred_bot)
+        pred_box = predicted_bounds[classname]
+        iou = calculate_iou(pred_box, bound)
+        if iou >= pred_threshold:
+            num_tp += 1
+        else:
+            num_fp += 1
 
-        # Draw a rectangle around the matched region
-        cv2.rectangle(img, pred_top_left, pred_bot_right, (0, 255, 0), 1)
-
-        # Evaluate against annotation
-        preds = np.array([pred_top, pred_bot, pred_left, pred_right])
-        errors = np.abs(preds - bounds)
-        error[i] = np.sum(errors)
-        print(f"template {i + 1} | errors [top, bot, left, right] = {errors}")
+    accuracy = num_tp / num_boxes if num_boxes != 0 else 0
+    true_pos_rate = num_tp / (num_tp + num_fn) if (num_tp + num_fn) != 0 else 0
+    fpr_denominator = (num_fp + num_boxes - num_tp)
+    false_pos_rate = num_fp / fpr_denominator if fpr_denominator != 0 else 0
+    false_neg_rate = num_fn / (num_fn + num_tp) if (num_fn + num_tp) != 0 else 0
+    
+    return accuracy, true_pos_rate, false_pos_rate, false_neg_rate
