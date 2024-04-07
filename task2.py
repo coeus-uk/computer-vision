@@ -184,6 +184,23 @@ def correlate_ssd_normed(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     norm_template = (template - np.mean(template)) / np.std(template)
     return correlate_ssd(norm_image, norm_template)
 
+import numpy as np
+import scipy.fftpack as fp
+
+def phase_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
+    norm_img = (img - np.mean(img)) / np.std(img)
+    norm_template = (template - np.mean(template)) / np.std(template)
+
+    img_ft = np.fft.rfft2(norm_img)                   
+    template_ft = np.fft.rfft2(norm_template, s=img.shape)
+
+    cross_correlation_ft = img_ft * np.conj(template_ft)
+    norm_cc_ft = cross_correlation_ft / np.abs(cross_correlation_ft)
+    
+    norm_cc = np.fft.irfft2(norm_cc_ft)
+    return norm_cc
+
+
 def template_pyramid_by_classname(dataset_folder: Path,
                                   file_extension: str = ".png"
                                   ) -> Iterator[tuple[str, list[MatLike]]]:
