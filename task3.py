@@ -90,11 +90,11 @@ class BruteForceMatcher:
 class IModel(ABC):
 
     @abstractmethod
-    def fit(self, src, dst):
+    def fit(self, src: np.ndarray, dst: np.ndarray) -> np.ndarray:
         pass
 
     @abstractmethod
-    def transform(self, src):
+    def transform(self, src: np.ndarray) -> np.ndarray:
         pass
 
     @abstractmethod
@@ -122,7 +122,7 @@ class RANSAC(IModel):
         self.best_model: IModel = None
         self.max_inliers = 0
 
-    def fit(self, src: np.ndarray, dst: np.ndarray):
+    def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, None]:
         assert(src.shape == dst.shape)
         num_points = src.shape[1]
 
@@ -157,7 +157,7 @@ class RANSAC(IModel):
 
                 self.best_model = better_model
 
-        # TODO: Return mask of outliers
+        # TODO: Return a mask of the outliers
         return self, ()
 
     def transform(self, src: np.ndarray) -> np.ndarray:
