@@ -1,11 +1,31 @@
 import numpy as np
 import cv2
 
-
 def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: float, high_threshold: float) -> np.ndarray:
+    """
+    Perform canny edge detection on the input image using a series of steps including Gaussian blur, Sobel filtering,
+    non-maximum suppression, and hysteresis thresholding.
+
+    Args:
+        src (np.ndarray): Input image as a NumPy array.
+        gauss_kernel_size (int): Size of the Gaussian kernel for blurring.
+        sigma (float): Standard deviation of the Gaussian kernel for blurring.
+        low_threshold (float): Lower threshold for hysteresis thresholding.
+        high_threshold (float): Higher threshold for hysteresis thresholding.
+
+    Returns:
+        np.ndarray: Processed image with detected edges.
+
+    """
     img = src.copy().astype(np.double)
+    
+    # Apply Gaussian Blur - inbuilt function is ok
     img = cv2.GaussianBlur(img, (gauss_kernel_size, gauss_kernel_size), sigma)
-    (dirs, magnitudes) = sobel(img)
+    
+    # Sobel Filtering
+    dirs, magnitudes = sobel(img)
+
+    # Non Maximum Suppression
     img = non_max_suppression(magnitudes, dirs)
 
     # Hystheresis Thresholding
@@ -15,34 +35,24 @@ def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: 
 
 
 def sobel(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    # kernel_x = np.array([
-    #     [-1, 0, 1],
-    #     [-2, 0, 2],
-    #     [-1, 0, 1]
-    # ])
-    # kernel_y = np.array([
-    #     [-1, -2, -1],
-    #     [0, 0, 0],
-    #     [1, 2, 1]
-    # ])
+    """
+    Apply Sobel edge detection to the input image.
 
-    # img_x = cv2.filter2D(img, -1, kernel_x)
-    # img_x = np.absolute(img_x)
-    # img_x = img_x / img_x.max() * 255
-    # img_x = img_x.astype(np.uint8)
+    Args:
+        img (np.ndarray): Input image as a NumPy array.
 
-    # img_y = cv2.filter2D(img, -1, kernel_y)
-    # img_y = np.absolute(img_y)
-    # img_y = img_y / img_y.max() * 255
-    # img_y = img_y.astype(np.uint8)
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing:
+            - theta (np.ndarray): Gradient direction at each pixel in radians.
+            - magnitude_uint8 (np.ndarray): Magnitude of the gradient, scaled to 0-255 and represented as uint8.
+
+    """
 
     img_x = cv2.Sobel(img, cv2.CV_64F, 1, 0)
     img_y = cv2.Sobel(img, cv2.CV_64F, 0, 1)
 
-    
-
     magnitude = np.sqrt(img_x**2 + img_y**2)
-    max_magnitude = np.max(magnitude) #np.hypot(img_x, img_y)
+    max_magnitude = np.max(magnitude) 
     magnitude = (magnitude / max_magnitude) * 255
     #magnitude = magnitude.astype(np.uint8)
     magnitude_uint8 = np.clip(magnitude, 0, 255).astype(np.uint8)
@@ -66,10 +76,6 @@ def non_max_suppression(magnitudes: np.ndarray, dirs: np.ndarray) -> np.ndarray:
     #@# the neighbours above and below.
     #c#
     '''
-    # dirs = np.rad2deg(dirs.copy()) # <- personally I'd find fractions of pi easier to read than decimals of degrees
-
-    # convert range of angles from range [-2pi, 2pi] to [0, 2pi]
-    # dirs = (dirs + (2 * np.pi)) % (2 * np.pi)
 
     if (magnitudes.shape != dirs.shape):
         raise ValueError("Must have same nmber of magnitudes as directions")
@@ -133,11 +139,38 @@ def hysteresis_thresholding(img: np.ndarray, low_threshold: float, high_threshol
 
     return out
 
-def hough_lines(img: np.ndarray, threshold:int=20, theta_res: float=3, rho_res: float=1) -> list[tuple]:
-    accumulator, theta_range, rho_range = hough_line(img, theta_res, rho_res)
+def hough_lines(img: np.ndarray, threshold:int=80, theta_res: float=1.667, rho_res: float=1) -> list[tuple]:
+    """
+    Detect lines in the input image using the Hough transform.
+
+    Args:
+        img (np.ndarray): Input image as a NumPy array.
+        threshold (int): Threshold for line detection. Default is 80.
+        theta_res (float): Resolution of theta values in degrees. Default is 1.667.
+        rho_res (float): Resolution of rho values. Default is 1.
+
+    Returns:
+        list[tuple]: List of detected lines represented as (rho, theta) tuples.
+    """
+
+    accumulator, theta_range, rho_range = hough_transform(img, theta_res, rho_res)
     return get_lines(accumulator, theta_range, rho_range, threshold)
 
-def hough_line(img: np.ndarray, theta_res: float=3, rho_res: float=1) -> tuple[np.ndarray[np.uint8], np.ndarray[float], np.ndarray[float]]:
+def hough_transform(img: np.ndarray, theta_res: float=3, rho_res: float=1) -> tuple[np.ndarray[np.uint8], np.ndarray[float], np.ndarray[float]]:
+    """
+    Apply Hough transform on the input image to detect lines.
+
+    Args:
+        img (np.ndarray): Input image as a NumPy array.
+        theta_res (float): Resolution of theta values in degrees. Default is 3.
+        rho_res (float): Resolution of rho values. Default is 1.
+
+    Returns:
+        tuple: A tuple containing:
+            - accumulator (np.ndarray[np.uint8]): Accumulator array.
+            - theta_range (np.ndarray[float]): Range of theta values.
+            - rho_range (np.ndarray[float]): Range of rho values.
+    """
     height, width = img.shape
     max_rho = np.hypot(height, width).astype(int) 
     theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
@@ -178,22 +211,23 @@ def hough_line(img: np.ndarray, theta_res: float=3, rho_res: float=1) -> tuple[n
 # This function can definately be combined with hough_line, it is only ever called as a combination with hough_line and vice versa.
 # This would simplify the API.
 def get_lines(accumulator, theta_range, rho_range, threshold):
+    """
+    Extract lines from the accumulator array based on the given threshold.
+
+    Args:
+        accumulator (np.ndarray): Accumulator array obtained from Hough transform.
+        theta_range (np.ndarray): Range of theta values.
+        rho_range (np.ndarray): Range of rho values.
+        threshold (int): Threshold for line detection.
+
+    Returns:
+        list[tuple]: List of detected lines represented as (rho, theta) tuples.
+    """
     y_idxs, x_idxs = np.where(accumulator > threshold)
     rho_vals = rho_range[y_idxs]
     theta_vals = theta_range[x_idxs]
     lines = list(zip(rho_vals, theta_vals))
     return lines
 
-def draw_lines(img, lines):
-    for rho, theta in lines:
-        a = np.cos(theta)
-        b = np.sin(theta)
-        x0 = a * rho
-        y0 = b * rho
-        x1 = int(x0 + 1000 * (-b))
-        y1 = int(y0 + 1000 * (a))
-        x2 = int(x0 - 1000 * (-b))
-        y2 = int(y0 - 1000 * (a))
-        cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
 
