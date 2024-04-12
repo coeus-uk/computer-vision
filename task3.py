@@ -1,4 +1,5 @@
 import cv2 as cv
+import pandas as pd
 import numpy as np
 
 from pathlib import Path
@@ -30,9 +31,9 @@ class ImageDataset:
 
     Iterates over images in a given directory, loading them one-by-one as needed.
     """
-    def __init__(self, img_dir_path: Path, file_ext: str):
-        self.img_dir_path = img_dir_path
-        self.img_paths = list(img_dir_path.glob(f'*.{file_ext}'))
+    def __init__(self, img_dir: Path, file_ext: str):
+        self.img_dir = img_dir
+        self.img_paths = list(img_dir.glob(f'*.{file_ext}'))
         self.index = 0
 
     def __iter__(self) -> Self:
@@ -221,7 +222,34 @@ class AlignedBoundingBox:
     the sides of the box are parallel to the co-ordinate axes.
     """
 
-    points: np.ndarray
+    top: int
+    left: int
+    bottom: int
+    right: int
+    
+    @classmethod
+    def from_series(cls: Self, series: pd.Series) -> Self:
+        """
+        Create an axis-aligned bounding box from a pandas series.
+        """
+        return cls(series.top, series.left, series.bottom, series.right)
+    
+    def compute_iou(self, other: Self) -> float:
+        x_left = max(self.left, other.left)
+        y_top = max(self.top, other.top)
+        x_right = min(self.right, other.right)
+        y_bottom = min(self.bottom, other.bottom)
+
+        # Ensure there is an intersection, otherwise return nothing.
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0
+        
+        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+        self_area = (self.right - self.left) * (self.bottom - self.top)
+        other_area = (other.right - other.left) * (other.bottom - other.top)
+
+        # Compute IoU
+        return intersection_area / (self_area + other_area - intersection_area)
 
 
 class BoundingBox:
@@ -249,8 +277,8 @@ class BoundingBox:
         x = self.points[:, 0, 0]
         y = self.points[:, 0, 1]
 
-        axis_aligned_points = np.array([min(x), min(y), max(x), max(y)])
-        return AlignedBoundingBox(axis_aligned_points)
+        axis_aligned_points = [min(x), min(y), max(x), max(y)]
+        return AlignedBoundingBox(*axis_aligned_points)
 
 
 @dataclass
