@@ -1,7 +1,7 @@
 import pandas as pd
 import cv2
 import numpy as np
-from scipy.signal import fftconvolve
+from scipy.signal import fftconvolve, convolve
 from pathlib import Path
 from cv2.typing import MatLike
 from typing import Iterator
@@ -38,19 +38,21 @@ THRESHOLDS = [
 #     0.8]
 
 def predict_all_templates(img_pyr: list[MatLike], 
-                        templates: list[tuple[str, list[MatLike]]]
-                        ) -> tuple[list[str], list[float], list[np.ndarray]]:
+                          templates: list[tuple[str, list[MatLike]]]
+                          ) -> tuple[list[str], list[float], list[np.ndarray]]:
     """
     Predict bounding boxes for a number of templates in a given image.
     Calculate the error if a match is found.
     """
     
-    classnames, scores, pred_boxes = [], [], []
+    classnames, scores, pred_boxes, results = [], [], [], []
     for classname, template_pyr in templates:
-        matches = predict_bounding_box(img_pyr, template_pyr, classname)
-        first_match = next(matches, None)
-        if (first_match is None): continue
-        score, pred_box = first_match
+        matches = predict_bounding_box(img_pyr, template_pyr)
+        all_matches = [match for match in matches]
+        if (len(all_matches) == 0): continue
+
+        all_matches.sort(key=lambda m: m[0], reverse=True)
+        score, pred_box = all_matches[0]
         classnames.append(classname)
         scores.append(score)
         pred_boxes.append(pred_box)
@@ -58,8 +60,8 @@ def predict_all_templates(img_pyr: list[MatLike],
     return classnames, scores, pred_boxes
        
 
-def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike], 
-                         classname: str, thresholds: list[int] = THRESHOLDS) -> Iterator[tuple[float, np.ndarray]]:
+def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike]
+                         ) -> Iterator[tuple[float, np.ndarray]]:
     """
     Use multi resolution template matching to match a given collection of 
     tempaltes in an image. 
@@ -74,14 +76,16 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike],
             if template_h > img_h or template_w > img_w: continue 
         
             # Perform template matching
-            result = cv2.matchTemplate(img_layer, template_layer,
-                                        cv2.TM_CCOEFF_NORMED) # <- this isn't allowed
+            # result = cv2.matchTemplate(norm_image, norm_template,
+            #                             cv2.TM_SQDIFF_NORMED) # <- this isn't allowed
+            result = phase_correlation(img_layer, template_layer)
+            # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_CCOEFF_NORMED)
             # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_SQDIFF)
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
             score = max_val
             pred_top_left = max_loc
-            if score > CCOEFF_NORMED_THRESHOLD:#thresholds[t_level]:
+            if score > 0.0:#thresholds[t_level]:
                 img_sf = 2 ** i_level
                 left, top = pred_top_left
                 left, top = (int(left * img_sf), int(top * img_sf))
@@ -101,10 +105,13 @@ def non_max_suppression(preds: list[np.ndarray], scores: list[float],
     
     # Tolerance for very slight overlaps
     iou_threshold = 0.005 
-
+    eval_order = np.argsort(np.array(scores))[::-1]
     boxes_to_remove = set()
-    for j, box in enumerate(preds):
-        for i, other_box in enumerate(preds):
+    
+    for j in eval_order:
+        box = preds[j]
+        for i in eval_order[::-1]:
+            other_box = preds[i]
             if i == j: continue
             iou = calculate_iou(box, other_box)
             if (iou > iou_threshold and scores[i] < scores[j]):
@@ -221,8 +228,8 @@ def template_pyramid_by_classname(dataset_folder: Path,
             new_width = int(width * scale)
             new_height = int(height * scale)
             template = cv2.resize(template,
-                                          (new_width, new_height),
-                                          interpolation=cv2.INTER_AREA)
+                                  (new_width, new_height),
+                                  interpolation=cv2.INTER_AREA)
             template_pyr.append(template)
         
         # Annotations are prefixed by 2 numbers, the given dataset has 3.
