@@ -1,6 +1,7 @@
 import cv2 as cv
 import pandas as pd
 import numpy as np
+import logging
 
 from pathlib import Path
 from cv2 import DMatch, SIFT
@@ -9,7 +10,11 @@ from dataclasses import dataclass
 from typing_extensions import Self
 from abc import ABC, abstractmethod
 from matplotlib import pyplot as plt
-from typing import Tuple, List, Callable
+from typing import Tuple, List, Callable, Dict
+
+# Configure basic logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s]::[%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def squared_error_loss(truth: np.ndarray, prediction: np.ndarray) -> np.ndarray:
@@ -285,15 +290,24 @@ class BoundingBox:
 class Detection:
 
     img_path: Path
-    bounding_box: BoundingBox
+    bounding_box: BoundingBox | AlignedBoundingBox
+
+    @property
+    def icon_name(self) -> str:
+        return self.img_path.stem.split("-")[-1]
 
 
 class ObjectDetector:
     """
     Object detector using SIFT keypoint localisation and descriptors.
     """
-    def __init__(self, query_images: ImageDataset, sift_hyperparams: dict):
+    def __init__(self, query_images: ImageDataset, sift_hyperparams: dict, verbose: bool = True):
         self.query_images = query_images
+
+        if verbose:
+            logger.setLevel(logging.INFO)
+        else:
+            logger.setLevel(logging.WARNING)
 
         self.sift = SIFT.create(**sift_hyperparams)
         self.matcher = BruteForceMatcher(euclidean_distance)
@@ -305,9 +319,9 @@ class ObjectDetector:
             draw: bool = True, 
             lowe_ratio_test_threshold: float = 0.7, 
             min_match_count: int = 10
-            ) -> List[Detection]:
+            ) -> Dict[str, Detection]:
         
-        detections = []
+        detections = {}
         kp_train, desc_train = self.sift.detectAndCompute(train_img, None)
 
         for query_img, img_path in self.query_images:
@@ -332,12 +346,12 @@ class ObjectDetector:
             # We require at least `min_match_count` good matches to be present to consider
             # this query image present in our train image.
             if len(good_matches) <= min_match_count:
-                print(f"Skipping query image {img_path}. Not enough good matches found - " + \
+                logger.info(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
                 continue
 
             try:
-                print(f"Query image {img_path} yields enough good matches - " + \
+                logger.info(f"Query image {img_path} yields enough good matches - " + \
                         f"{len(good_matches)}/{min_match_count}. Finding transform...")
                 
                 # Extract the locations of matched keypoints in both images and convert
@@ -372,13 +386,13 @@ class ObjectDetector:
                     plt.imshow(matches_img)
                     plt.show()
             except Exception as e:
-                print(f"An exception was raised while handling query image {img_path}")
+                logger.info(f"An exception was raised while handling query image {img_path}")
                 continue
 
             axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
             detection = Detection(img_path, axis_aligned_bbox)
 
-            detections.append(detection)
+            detections[detection.icon_name] = detection
 
         return detections
     
@@ -398,3 +412,33 @@ class ObjectDetector:
             for first, second in matches
             if first.distance / second.distance < lowe_ratio_test_threshold
         ]
+    
+
+def evaluate_detections(detections: Dict[str, Detection], annotations: pd.DataFrame, iou_threshold: float = 0.5):
+    tp, fp, fn = 0, 0, 0
+    num_annotations = len(annotations)
+
+    for _, gt in annotations.iterrows():
+        if gt.classname not in detections:
+            fn += 1
+            continue
+
+        detection = detections[gt.classname]
+
+        gt_bbox = AlignedBoundingBox.from_series(gt)
+        pred_bbox = detection.bounding_box
+
+        iou = pred_bbox.compute_iou(gt_bbox)
+        if iou > iou_threshold:
+            tp += 1
+        else:
+            fp += 1
+
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+    fnr = fn / (tp + fn) if (tp + fn) > 0 else 0
+    
+    fpr_denominator = (fp + num_annotations - tp)
+    fpr = fp / fpr_denominator if fpr_denominator > 0 else 0
+    accuracy = tp / num_annotations if num_annotations > 0 else 0
+
+    return accuracy, tpr, fpr, fnr
