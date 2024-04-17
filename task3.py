@@ -57,9 +57,16 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path)), img_path
+            return cv.imread(str(img_path), cv.COLOR_RGB2GRAY), img_path
         else:
             raise StopIteration
+        
+    def print(self, i: int):
+        assert 0 <= i < len(self.img_paths)
+        img_path = self.img_paths[i]
+        
+        plt.imshow(cv.imread(str(img_path), cv.COLOR_RGB2GRAY))
+        plt.show()
 
 
 class BruteForceMatcher:
@@ -301,7 +308,7 @@ class ObjectDetector:
     """
     Object detector using SIFT keypoint localisation and descriptors.
     """
-    def __init__(self, query_images: ImageDataset, sift_hyperparams: dict, verbose: bool = True):
+    def __init__(self, query_images: ImageDataset, sift_hyperparams: dict, ransac_hyperparams: dict, verbose: bool = True):
         self.query_images = query_images
 
         if verbose:
@@ -316,9 +323,9 @@ class ObjectDetector:
     def detect(
             self, 
             train_img: MatLike, 
-            draw: bool = True, 
             lowe_ratio_test_threshold: float = 0.7, 
-            min_match_count: int = 10
+            min_match_count: int = 10,
+            draw: bool = True
             ) -> Dict[str, Detection]:
         
         detections = {}
@@ -386,7 +393,7 @@ class ObjectDetector:
                     plt.imshow(matches_img)
                     plt.show()
             except Exception as e:
-                logger.info(f"An exception was raised while handling query image {img_path}")
+                logger.warning(f"An exception was raised while handling query image {img_path}")
                 continue
 
             axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
