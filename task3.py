@@ -1,8 +1,9 @@
+import logging
 import cv2 as cv
 import pandas as pd
 import numpy as np
-import logging
 
+from enum import Enum
 from pathlib import Path
 from cv2 import DMatch, SIFT
 from cv2.typing import MatLike
@@ -28,6 +29,13 @@ def euclidean_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
     Calculates the Euclidean distance between two vectors.
     """
     return np.linalg.norm(vec1 - vec2)
+
+
+class Verbosity(Enum):
+
+    HIGH = 2
+    MEDIUM = 1
+    LOW = 0
 
 
 class ImageDataset:
@@ -57,7 +65,7 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path), cv.COLOR_RGB2GRAY), img_path
+            return cv.imread(str(img_path), cv.IMREAD_COLOR), img_path
         else:
             raise StopIteration
         
@@ -65,7 +73,7 @@ class ImageDataset:
         assert 0 <= i < len(self.img_paths)
         img_path = self.img_paths[i]
         
-        plt.imshow(cv.imread(str(img_path), cv.COLOR_RGB2GRAY))
+        plt.imshow(cv.imread(str(img_path), cv.IMREAD_COLOR))
         plt.show()
 
 
@@ -119,12 +127,12 @@ class RANSAC(IModel):
 
     def __init__(
             self, 
-            min_datapoints: int, 
-            max_iterations: int, 
-            threshold: float, 
-            model_cls: IModel, 
-            loss: Callable[[np.ndarray, np.ndarray], np.ndarray],
+            model_cls: IModel,
             model_hyperparams: dict,
+            loss: Callable[[np.ndarray, np.ndarray], np.ndarray],
+            min_datapoints: int,
+            max_iterations: int = 14,
+            threshold: float = 5.0,
             ):
         self.min_datapoints = min_datapoints
         self.max_iterations = max_iterations
@@ -318,7 +326,7 @@ class ObjectDetector:
 
         self.sift = SIFT.create(**sift_hyperparams)
         self.matcher = BruteForceMatcher(euclidean_distance)
-        self.ransac = RANSAC(4, 14, 5, DirectLinearTransformer, squared_error_loss, {})
+        self.ransac = RANSAC(DirectLinearTransformer, {}, squared_error_loss, 4, **ransac_hyperparams)
 
     def detect(
             self, 
