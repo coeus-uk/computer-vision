@@ -67,7 +67,7 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike]
     tempaltes in an image. 
     Returns the matches predicted bounding box as well as its score.
     """
-    for t_level, template_layer in enumerate(template_pyr):
+    for template_layer in template_pyr:
         template_h, template_w = template_layer.shape
         for i_level, img_layer in enumerate(img_pyr):
             img_h, img_w = img_layer.shape
@@ -85,7 +85,7 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike]
 
             score = max_val
             pred_top_left = max_loc
-            if score > 0.0:#thresholds[t_level]:
+            if score > 0.0:
                 img_sf = 2 ** i_level
                 left, top = pred_top_left
                 left, top = (int(left * img_sf), int(top * img_sf))
@@ -107,7 +107,7 @@ def non_max_suppression(preds: list[np.ndarray], scores: list[float],
     iou_threshold = 0.005 
     eval_order = np.argsort(np.array(scores))[::-1]
     boxes_to_remove = set()
-    
+
     for j in eval_order:
         box = preds[j]
         for i in eval_order[::-1]:
@@ -231,6 +231,12 @@ def template_pyramid_by_classname(dataset_folder: Path,
                                   (new_width, new_height),
                                   interpolation=cv2.INTER_AREA)
             template_pyr.append(template)
+            template_pyr.append(cv2.rotate(template.copy(),
+                                           cv2.ROTATE_90_CLOCKWISE))
+            template_pyr.append(cv2.rotate(template.copy(),
+                                           cv2.ROTATE_180))
+            template_pyr.append(cv2.rotate(template.copy(),
+                                           cv2.ROTATE_90_COUNTERCLOCKWISE))
         
         # Annotations are prefixed by 2 numbers, the given dataset has 3.
         classname = path.stem[1:] 
@@ -293,7 +299,7 @@ def path_lexigraphical_order(path: Path) -> tuple[int, str]:
 
 def evaluation_metrics(predicted_bounds: dict[str, np.ndarray], 
                        annotated_bounds: list[tuple[str, np.ndarray]],
-                       pred_threshold: float = 0.95
+                       pred_threshold: float = 0.5
                        ) -> tuple[float, float, float, float]:
     """
     Calculates the accuracy, true positive rate, false positive rate,
