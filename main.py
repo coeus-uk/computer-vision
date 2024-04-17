@@ -89,14 +89,14 @@ def testTask2(iconDir: str, testDir: str) -> tuple[float, float, float, float]:
     # For each predicted class, check accuracy with the annotations
     # Check and calculate the Intersection Over Union (IoU) score
     # based on the IoU determine accuracy, TruePositives, FalsePositives, FalseNegatives
-    image_pyramid_levels = 5
+    # image_pyramid_levels = 5
     images = task2.images_with_annotations(Path(testDir))
     templates = task2.template_pyramid_by_classname(Path(iconDir, "png"))
     templates = [(classname, pyr) for (classname, pyr) in templates]
     results: list[tuple[float, float, float, float]] = []
 
     for img, annotations in images:
-        img_pyr = task2.gaussian_pyrarmid(img, image_pyramid_levels)
+        img_pyr = [img]#task2.gaussian_pyrarmid(img, image_pyramid_levels)
         classnames, scores, pred_boxes = task2.predict_all_templates(img_pyr, templates)
         task2.non_max_suppression(pred_boxes, scores, classnames)
         task2.annotate_predictions(img, classnames, scores, pred_boxes)
@@ -131,9 +131,6 @@ if __name__ == "__main__":
     parser.add_argument("--Task2Dataset", help="Provide a folder that contains the Task 2 test Dataset.", type=str, required=False)
     parser.add_argument("--Task3Dataset", help="Provide a folder that contains the Task 3 test Dataset.", type=str, required=False)
     args = parser.parse_args()
-
-    if (args.Task1Dataset == None):
-        testTask1("./Task1Dataset")
 
     if(args.Task1Dataset!=None):
         # This dataset has a list of png files and a txt file that has annotations of filenames and angle
