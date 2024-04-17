@@ -339,9 +339,17 @@ class ObjectDetector:
         detections = {}
         kp_train, desc_train = self.sift.detectAndCompute(train_img, None)
 
+        # If no keypoints or descriptors are detected, skip.
+        if kp_train == () or desc_train is None:
+            return detections
+
         for query_img, img_path in self.query_images:
             # Extract keypoints and generate descriptors using SIFT.
             kp_query, desc_query = self.sift.detectAndCompute(query_img, None)
+
+            # If no keypoints or descriptors are detected, skip.
+            if kp_query == () or desc_query is None:
+                continue
 
             # For each descriptor in `desc_query`, find the `k` closest descriptors in 
             # `desc_train`. We choose `k=2` for use in applying Lowe's ratio test, which
@@ -425,7 +433,8 @@ class ObjectDetector:
         return [ 
             first
             for first, second in matches
-            if first.distance / second.distance < lowe_ratio_test_threshold
+            # first / second < lowe => first < lowe * second
+            if first.distance < lowe_ratio_test_threshold * second.distance 
         ]
     
 
