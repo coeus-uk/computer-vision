@@ -1,3 +1,4 @@
+import re
 import logging
 import cv2 as cv
 import pandas as pd
@@ -65,7 +66,7 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path), cv.IMREAD_COLOR), img_path
+            return cv.imread(str(img_path)), img_path
         else:
             raise StopIteration
         
@@ -313,7 +314,15 @@ class Detection:
 
     @property
     def icon_name(self) -> str:
-        return self.img_path.stem.split("-")[-1]
+        filename = self.img_path.stem
+        match = re.search(r'\d+-(.*)', filename)
+
+        if match:
+            icon_name = match.group(1)
+        else:
+            raise ValueError(f"Couldn't parse icon name from {self.img_path}")
+
+        return icon_name
 
 
 class ObjectDetector:
@@ -438,7 +447,135 @@ class ObjectDetector:
             first
             for first, second in matches
             # first / second < lowe => first < lowe * second
-            if first.distance < lowe_ratio_test_threshold * second.distance 
+            if first.distance < lowe_ratio_test_threshold * second.distance
+        ]
+    
+
+class TutorialObjectDetector:
+    """
+    Object detector using SIFT keypoint localisation and descriptors.
+    """
+    def __init__(
+            self, 
+            query_images: ImageDataset, 
+            sift_hyperparams: dict,
+            verbose: bool = True,
+            **kwargs,
+        ):
+        self.query_images = query_images
+
+        if verbose:
+            logger.setLevel(logging.INFO)
+        else:
+            logger.setLevel(logging.WARNING)
+
+        self.sift = cv.SIFT.create(**sift_hyperparams)
+        self.matcher = BruteForceMatcher(euclidean_distance)
+
+    def detect(
+        self, 
+        test_img: MatLike, 
+        lowe_ratio_test_threshold: float = 0.7, 
+        min_match_count: int = 10,
+        draw: bool = False, 
+    ):
+        detections = {}
+        kp_test, desc_test = self.sift.detectAndCompute(test_img, None)
+
+        # If no keypoints or descriptors are detected, skip.
+        if kp_test == () or desc_test is None:
+            return detections
+
+        for query_img, img_path in self.query_images:
+            # Extract keypoints and generate descriptors using SIFT.
+            kp_query, desc_query = self.sift.detectAndCompute(query_img, None)
+
+            # If no keypoints or descriptors are detected, skip.
+            if kp_query == () or desc_query is None:
+                continue
+
+            # For each descriptor in `desc_query`, find the `k` closest descriptors in 
+            # `desc_test`. We choose `k=2` for use in applying Lowe's ratio test, which
+            # is a method to filter out poor matches (outliers?). Lowe's ratio test is
+            # a heuristic to select good matches between two sets of features. By asking
+            # `knnMatch` to find the 2 nearest neighbours, we can apply this test, which
+            # compares the distance of the closest neighbour to the second closest
+            # neighbour. The test asserts that if the ratio of the closest distance to
+            # the second closest distance is below acertain threshold (e.g., 0.7), then
+            # the match is considered good. The rational is that a good match is
+            # significantly closer than the second best match. This helps to filter out
+            # many false matches (FPs) where the difference between the best and second-
+            # best is not significant.
+            # matches = self.matcher.knnMatch(desc_query, desc_test, k=2)
+            matches = self.matcher.knn_match(desc_query, desc_test, 2)
+            good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
+
+            if len(good_matches) <= min_match_count:
+                logger.info(f"Skipping query image {img_path}. Not enough good matches found - " + \
+                      f"{len(good_matches)}/{min_match_count}")
+                continue
+
+            try:
+                logger.info(f"Query image {img_path} yields enough good matches - " + \
+                        f"{len(good_matches)}/{min_match_count}. Finding transform...")
+                
+                source_points = np.float32(
+                    [kp_query[m.queryIdx].pt for m in good_matches]
+                ).reshape(-1,1,2)
+                dest_points = np.float32(
+                    [kp_test[m.trainIdx].pt for m in good_matches]
+                ).reshape(-1,1,2)
+
+                # TODO: implement `findHomography`, `RANSAC`. This line finds inliers.
+                M, mask = cv.findHomography(source_points, dest_points, cv.RANSAC, 5.0)
+                matches_mask = mask.ravel().tolist()
+
+                # Define the corner points of the query image.
+                h, w = query_img.shape[0], query_img.shape[1]
+                query_corners = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
+                
+                # Apply the homography matrix to transform the corner points of the
+                # query image to the co-ordinate system of the test image.
+                destination = cv.perspectiveTransform(query_corners, M)
+                oriented_bounding_box = np.int32(destination)
+
+                polyline_test_img = cv.polylines(
+                    test_img.copy(), [oriented_bounding_box], True, 255, 3, cv.LINE_AA)
+            except Exception as e:
+                logger.warning(f"An exception was raised while handling query image {img_path}\n{e}")
+                continue
+            
+            if draw:
+                matches_img = cv.drawMatches(
+                    query_img, kp_query, polyline_test_img, kp_test, good_matches, 
+                    None, (0, 255, 0), None, matches_mask, 2)
+                
+                plt.imshow(matches_img)
+                plt.show()
+
+            axis_aligned_bbox = BoundingBox(oriented_bounding_box).align_with_axis()
+            detection = Detection(img_path, axis_aligned_bbox)
+
+            detections[detection.icon_name] = detection
+
+        return detections
+    
+    def _perform_lowes_ratio_test(
+        self, 
+        matches: List[Tuple[DMatch, DMatch]],
+        lowe_ratio_test_threshold: float
+    ) -> List[DMatch]:
+        """
+        Filters out noisy, ambiguous matches using Lowe's ratio test.
+
+        When writing the report, maybe we should discuss the empirical trade-off between
+        false positives & true negatives and how varying this threshold affects them.
+        """
+        return [ 
+            first
+            for first, second in matches
+            # first / second < lowe => first < lowe * second
+            if first.distance < lowe_ratio_test_threshold * second.distance
         ]
     
 
