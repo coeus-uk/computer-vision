@@ -12,6 +12,7 @@ share
 
 # universal venv stuff
 .venv
+venv
 pyvenv.cfg
 __pycache__
 venv

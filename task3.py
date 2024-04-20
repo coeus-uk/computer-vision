@@ -84,6 +84,10 @@ class BruteForceMatcher:
 
     def knn_match(self, src_vecs: np.ndarray, dst_vecs: np.ndarray, k: int) -> List[Tuple[DMatch, ...]]:
         matches = []
+
+        # Ensure there are at least k destination vectors for each source vector.
+        if len(dst_vecs) < k:
+            return matches
         
         # Compute the distance between every pairing. Keep only the closest.
         for s_idx, s_vec in enumerate(src_vecs):
@@ -409,7 +413,7 @@ class ObjectDetector:
                     plt.imshow(matches_img)
                     plt.show()
             except Exception as e:
-                logger.warning(f"An exception was raised while handling query image {img_path}")
+                logger.warning(f"An exception was raised while handling query image {img_path}.\n{e}")
                 continue
 
             axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
