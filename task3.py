@@ -1,4 +1,5 @@
 import re
+import math
 import logging
 import cv2 as cv
 import pandas as pd
@@ -66,7 +67,7 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path)), img_path
+            return cv.imread(str(img_path), cv.IMREAD_GRAYSCALE), img_path
         else:
             raise StopIteration
         
@@ -135,24 +136,37 @@ class RANSAC(IModel):
             model_cls: IModel,
             model_hyperparams: dict,
             loss: Callable[[np.ndarray, np.ndarray], np.ndarray],
-            min_datapoints: int,
+            min_datapoints: int = 4,
             max_iterations: int = 14,
-            threshold: float = 5.0,
+            inliers_threshold: int = 0,
+            reproj_threshold: float = 5.0,
+            prob_outlier: float = 0.5,
+            confidence: float = 0.95,
             ):
         self.min_datapoints = min_datapoints
         self.max_iterations = max_iterations
-        self.threshold = threshold
-        self.model_cls = model_cls
         self.loss = loss
+        self.model_cls = model_cls
         self.model_hyperparams = model_hyperparams
         self.best_model: IModel = None
-        self.max_inliers = 0
+        self.threshold = reproj_threshold
+        self.inliers_threshold = inliers_threshold
+        self.max_inliers = inliers_threshold
+        self.prob_outlier = prob_outlier
+        self.confidence = confidence
 
     def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, None]:
         assert(src.shape == dst.shape)
         num_points = src.shape[1]
 
-        for iteration in range(self.max_iterations):
+        prob_outlier = 0.2
+        desired_prob = 0.95
+
+        num_iterations = 1000
+        iterations_done = 0
+
+        # Adaptively determining the number of iterations.
+        while num_iterations > iterations_done:
             permuted_idxs = np.random.permutation(num_points)
 
             sample_idxs = permuted_idxs[:self.min_datapoints]
@@ -160,7 +174,7 @@ class RANSAC(IModel):
             dst_samples = dst[:, sample_idxs]
 
             model = self.model_cls(**self.model_hyperparams)
-            model = model.fit(src_samples, dst_samples)
+            model.fit(src_samples, dst_samples)
 
             remaining_idxs = permuted_idxs[self.min_datapoints:]
             src_non_samples = src[:, remaining_idxs]
@@ -170,9 +184,10 @@ class RANSAC(IModel):
             within_threshold = losses < self.threshold
 
             inlier_idxs = remaining_idxs[within_threshold]
+            inlier_count = len(inlier_idxs)
 
-            if len(inlier_idxs) > self.max_inliers:
-                self.max_inliers = len(inlier_idxs)
+            if inlier_count > self.max_inliers:
+                self.max_inliers = inlier_count
 
                 inlier_idxs = np.hstack([sample_idxs, inlier_idxs])
                 src_inliers = src[:, inlier_idxs]
@@ -183,6 +198,17 @@ class RANSAC(IModel):
 
                 self.best_model = better_model
 
+            prob_outlier = 1 - (inlier_count / num_points)
+            iterations_done += 1
+
+            try:
+                num_iterations = min((
+                    math.log(1-desired_prob) / 
+                    math.log(1-(1-prob_outlier) ** self.min_datapoints)
+                ), 1000)
+            except ZeroDivisionError:
+                pass
+
         # TODO: Return a mask of the outliers
         return self, ()
 
@@ -191,7 +217,7 @@ class RANSAC(IModel):
     
     def reset(self):
         self.best_model = None
-        self.max_inliers = 0
+        self.max_inliers = self.inliers_threshold
 
 
 class DirectLinearTransformer(IModel):
@@ -339,7 +365,7 @@ class ObjectDetector:
 
         self.sift = SIFT.create(**sift_hyperparams)
         self.matcher = BruteForceMatcher(euclidean_distance)
-        self.ransac = RANSAC(DirectLinearTransformer, {}, squared_error_loss, 4, **ransac_hyperparams)
+        self.ransac = RANSAC(DirectLinearTransformer, {}, squared_error_loss, **ransac_hyperparams)
 
     def detect(
             self, 
@@ -381,8 +407,8 @@ class ObjectDetector:
 
             # We require at least `min_match_count` good matches to be present to consider
             # this query image present in our train image.
-            if len(good_matches) <= min_match_count:
-                logger.info(f"Skipping query image {img_path}. Not enough good matches found - " + \
+            if len(good_matches) < min_match_count:
+                logger.debug(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
                 continue
 
@@ -401,8 +427,12 @@ class ObjectDetector:
                 model, mask = self.ransac.fit(src_points, dst_points) 
                 matches_mask = None # TODO: Write matches_mask
 
+                if model.best_model is None:
+                    logger.info("No transform found.")
+                    continue
+
                 # Define the corner points of the query image.
-                h, w, _ = query_img.shape
+                h, w = query_img.shape[0], query_img.shape[1]
                 query_corners = np.float32([[0,0,1],[0,h-1,1],[w-1,h-1,1],[w-1,0,1]]).T
                 
                 # Apply the homography matrix to transform the corner points of the
@@ -510,8 +540,8 @@ class TutorialObjectDetector:
             matches = self.matcher.knn_match(desc_query, desc_test, 2)
             good_matches = self._perform_lowes_ratio_test(matches, lowe_ratio_test_threshold)
 
-            if len(good_matches) <= min_match_count:
-                logger.info(f"Skipping query image {img_path}. Not enough good matches found - " + \
+            if len(good_matches) < min_match_count:
+                logger.debug(f"Skipping query image {img_path}. Not enough good matches found - " + \
                       f"{len(good_matches)}/{min_match_count}")
                 continue
 
