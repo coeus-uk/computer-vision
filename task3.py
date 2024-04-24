@@ -67,9 +67,16 @@ class ImageDataset:
             img_path = self.img_paths[self.index]
             self.index += 1
 
-            return cv.imread(str(img_path), cv.IMREAD_GRAYSCALE), img_path
+            img = cv.imread(str(img_path))
+            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
+            # return cv.imread(str(img_path), cv.IMREAD_GRAYSCALE), img_path
+            return img, img_path
         else:
             raise StopIteration
+        
+    def __len__(self) -> int:
+        return len(self.img_paths)
         
     def print(self, i: int):
         assert 0 <= i < len(self.img_paths)
@@ -136,31 +143,28 @@ class RANSAC(IModel):
             model_cls: IModel,
             model_hyperparams: dict,
             loss: Callable[[np.ndarray, np.ndarray], np.ndarray],
-            min_datapoints: int = 4,
             max_iterations: int = 14,
+            min_datapoints: int = 4,
             inliers_threshold: int = 0,
             reproj_threshold: float = 5.0,
-            prob_outlier: float = 0.5,
             confidence: float = 0.95,
             ):
-        self.min_datapoints = min_datapoints
         self.max_iterations = max_iterations
         self.loss = loss
         self.model_cls = model_cls
         self.model_hyperparams = model_hyperparams
         self.best_model: IModel = None
-        self.threshold = reproj_threshold
+
+        # Hyperparameters
+        self.min_datapoints = min_datapoints
         self.inliers_threshold = inliers_threshold
         self.max_inliers = inliers_threshold
-        self.prob_outlier = prob_outlier
+        self.threshold = reproj_threshold
         self.confidence = confidence
 
     def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, None]:
         assert(src.shape == dst.shape)
         num_points = src.shape[1]
-
-        prob_outlier = 0.2
-        desired_prob = 0.95
 
         num_iterations = 1000
         iterations_done = 0
@@ -203,7 +207,7 @@ class RANSAC(IModel):
 
             try:
                 num_iterations = min((
-                    math.log(1-desired_prob) / 
+                    math.log(1-self.confidence) / 
                     math.log(1-(1-prob_outlier) ** self.min_datapoints)
                 ), 1000)
             except ZeroDivisionError:
