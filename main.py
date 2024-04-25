@@ -8,7 +8,7 @@ import utils
 
 
 def testTask1(folderName: str) -> int:
-    canny_testing = True
+    canny_testing = False
     dataset = pd.read_csv(f"{folderName}/list.txt")
     total_error = 0
 
@@ -42,6 +42,7 @@ def testTask1(folderName: str) -> int:
             edges = utils.canny(img, gauss_kernel_size, gauss_sigma, 
                                     gauss_low_threshold, gauss_high_threshold)
 
+
             images_edges.append((edges, correct_answer))
 
         # Just testing parameters for now
@@ -49,9 +50,9 @@ def testTask1(folderName: str) -> int:
             # Adding step to everything because we don't want to include the first 
             #   elem (0) and we want to include last elem. It becomes (0, end].
             #rhos = np.arange(0, 0.5, 0.05) + 0.05
-            rhos = np.array([0.1])
-            thetas = np.arange(1.60, 2, 0.001) 
-            thresholds = np.arange(60, 75, 1) #+ 0.1
+            rhos = np.array([1])
+            thetas = np.arange(1, 2, 0.01) 
+            thresholds = np.arange(80, 85, 5) #+ 0.1
 
             task1.try_params(images_edges, rhos, thetas, thresholds)
         else:
