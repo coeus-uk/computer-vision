@@ -1,0 +1,16 @@
+smallest template in data set 64x64  (1/8 scale)
+largets template in data set 320x320 (5/8 scale)
+
+5 template sizes
+5 image sizes
+
+
+faster alternative to resampling template for multiple rotations. 
+https://arxiv.org/abs/2311.07561
+
+fast normalised cross correlation
+https://www.researchgate.net/publication/2378357_Fast_Normalized_Cross-Correlation
+
+
+https://youtu.be/kUlwaf2Bie4?si=9FIN8JYfKOTO1TkD&t=532
+https://en.wikipedia.org/wiki/Phase_correlation
