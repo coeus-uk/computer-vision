@@ -31,7 +31,7 @@ def canny(src: np.ndarray, gauss_kernel_size: int, sigma: float, low_threshold: 
     # Hystheresis Thresholding
     img = hysteresis_thresholding(img, low_threshold, high_threshold)
 
-    return img
+    return img #, dirs
 
 
 def sobel(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -172,7 +172,7 @@ def hough_transform(img: np.ndarray, theta_res: float=3, rho_res: float=1) -> tu
             - rho_range (np.ndarray[float]): Range of rho values.
     """
     height, width = img.shape
-    max_rho = np.hypot(height, width).astype(int) 
+    max_rho = np.hypot(height, width).astype(int)
     theta_range = np.deg2rad(np.arange(-90, 90, theta_res))
     rho_range = np.arange(-max_rho, max_rho, rho_res)
     accumulator = np.zeros((len(rho_range), len(theta_range)), dtype=np.int64)

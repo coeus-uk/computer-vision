@@ -9,4 +9,3 @@ image7.png,95
 image8.png,109
 image9.png,18
 image10.png,90
-noisy.png,120
