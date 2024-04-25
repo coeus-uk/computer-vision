@@ -20,9 +20,9 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s]::[%(levelname)s] %
 logger = logging.getLogger(__name__)
 
 
-def squared_error_loss(truth: np.ndarray, prediction: np.ndarray) -> np.ndarray:
+def sum_squared_differences(truth: np.ndarray, prediction: np.ndarray) -> np.ndarray | float:
     """
-    Calculates the point-wise squared difference of two vectors.
+    Calculates the point-wise sum of squared differences between two vectors.
     """
     return np.sum((truth - prediction) ** 2, axis=0)
 
@@ -31,6 +31,12 @@ def euclidean_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
     Calculates the Euclidean distance between two vectors.
     """
     return np.linalg.norm(vec1 - vec2)
+
+def manhattan_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
+    """
+    Calculates the Manhattan distance (L1 norm) between two vectors.
+    """
+    return np.sum(np.abs(vec1 - vec2))
 
 
 class Verbosity(Enum):
@@ -68,9 +74,9 @@ class ImageDataset:
             self.index += 1
 
             img = cv.imread(str(img_path))
-            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+            # img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+            # img = cv.GaussianBlur(img, (5, 5), 1)
 
-            # return cv.imread(str(img_path), cv.IMREAD_GRAYSCALE), img_path
             return img, img_path
         else:
             raise StopIteration
@@ -162,14 +168,14 @@ class RANSAC(IModel):
         self.threshold = reproj_threshold
         self.confidence = confidence
 
-    def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, None]:
+    def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, np.ndarray]:
         assert(src.shape == dst.shape)
         num_points = src.shape[1]
 
-        num_iterations = 1000
         iterations_done = 0
+        num_iterations = 1000
+        matches_mask = np.zeros(num_points, np.int8)
 
-        # Adaptively determining the number of iterations.
         while num_iterations > iterations_done:
             permuted_idxs = np.random.permutation(num_points)
 
@@ -193,19 +199,26 @@ class RANSAC(IModel):
             if inlier_count > self.max_inliers:
                 self.max_inliers = inlier_count
 
+                # Gather all inliers.
                 inlier_idxs = np.hstack([sample_idxs, inlier_idxs])
                 src_inliers = src[:, inlier_idxs]
                 dst_inliers = dst[:, inlier_idxs]
 
+                # Re-fit the best model using the sampled datapoints and inliers.
                 better_model = self.model_cls(**self.model_hyperparams)
                 better_model.fit(src_inliers, dst_inliers)
 
                 self.best_model = better_model
 
+                # Update matches mask now a better model is found.
+                matches_mask.fill(0)
+                matches_mask[inlier_idxs] = 1
+
             prob_outlier = 1 - (inlier_count / num_points)
             iterations_done += 1
 
             try:
+                # Adaptively determine the number of iterations.
                 num_iterations = min((
                     math.log(1-self.confidence) / 
                     math.log(1-(1-prob_outlier) ** self.min_datapoints)
@@ -213,8 +226,7 @@ class RANSAC(IModel):
             except ZeroDivisionError:
                 pass
 
-        # TODO: Return a mask of the outliers
-        return self, ()
+        return self, matches_mask
 
     def transform(self, src: np.ndarray) -> np.ndarray:
         return self.best_model.transform(src)
@@ -289,6 +301,10 @@ class AlignedBoundingBox:
         """
         return cls(series.top, series.left, series.bottom, series.right)
     
+    @property
+    def area(self) -> float:
+        return (self.right - self.left) * (self.bottom - self.top)
+    
     def compute_iou(self, other: Self) -> float:
         x_left = max(self.left, other.left)
         y_top = max(self.top, other.top)
@@ -353,6 +369,24 @@ class Detection:
             raise ValueError(f"Couldn't parse icon name from {self.img_path}")
 
         return icon_name
+    
+
+class MemoizedSIFT:
+
+    def __init__(self, **kwargs):
+        self.sift = SIFT.create(**kwargs)
+        self.cache = {}
+
+    def detectAndCompute(self, img: MatLike, img_path: Path | None):
+        if img_path in self.cache:
+            return self.cache[img_path]
+        
+        keypoints, descriptors = self.sift.detectAndCompute(img, None)
+
+        if img_path is not None:
+            self.cache[img_path] = (keypoints, descriptors)
+
+        return (keypoints, descriptors)
 
 
 class ObjectDetector:
@@ -368,8 +402,8 @@ class ObjectDetector:
             logger.setLevel(logging.WARNING)
 
         self.sift = SIFT.create(**sift_hyperparams)
-        self.matcher = BruteForceMatcher(euclidean_distance)
-        self.ransac = RANSAC(DirectLinearTransformer, {}, squared_error_loss, **ransac_hyperparams)
+        self.matcher = BruteForceMatcher(sum_squared_differences)
+        self.ransac = RANSAC(DirectLinearTransformer, {}, sum_squared_differences, **ransac_hyperparams)
 
     def detect(
             self, 
@@ -428,8 +462,7 @@ class ObjectDetector:
                 # Use RANSAC to reject outliers and estimate a homography for the
                 # the remaining sets of inliers.
                 self.ransac.reset()
-                model, mask = self.ransac.fit(src_points, dst_points) 
-                matches_mask = None # TODO: Write matches_mask
+                model, matches_mask = self.ransac.fit(src_points, dst_points) 
 
                 if model.best_model is None:
                     logger.info("No transform found.")
@@ -444,24 +477,26 @@ class ObjectDetector:
                 # homogeneous row.
                 destination = model.transform(query_corners)[:2]
                 oriented_bounding_points = np.int32(destination).T.reshape(-1, 1, 2)
-
-                if draw:
-                    polyline_train_img = cv.polylines(
-                    train_img.copy(), [oriented_bounding_points], True, 255, 3, cv.LINE_AA)
-                    
-                    matches_img = cv.drawMatches(
-                        query_img, kp_query, polyline_train_img, kp_train, good_matches, 
-                        None, (0, 255, 0), None, matches_mask, 2)
-                    
-                    plt.imshow(matches_img)
-                    plt.show()
             except Exception as e:
                 logger.warning(f"An exception was raised while handling query image {img_path}.\n{e}")
                 continue
 
             axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
-            detection = Detection(img_path, axis_aligned_bbox)
 
+            if draw and axis_aligned_bbox.area > 10:
+                # Draw bounding box.
+                polyline_train_img = cv.polylines(
+                    train_img.copy(), [oriented_bounding_points], True, 255, 3, cv.LINE_AA)
+                
+                # Draw lines connnecting matches.
+                matches_img = cv.drawMatches(
+                    query_img, kp_query, polyline_train_img, kp_train, good_matches, 
+                    None, (0, 255, 0), None, matches_mask, 2)
+                
+                plt.imshow(matches_img)
+                plt.show()
+
+            detection = Detection(img_path, axis_aligned_bbox)
             detections[detection.icon_name] = detection
 
         return detections
@@ -617,7 +652,7 @@ def evaluate_detections(detections: Dict[str, Detection], annotations: pd.DataFr
     tp, fp, fn = 0, 0, 0
     num_annotations = len(annotations)
 
-    for _, gt in annotations.iterrows():
+    for gt in annotations.itertuples():
         if gt.classname not in detections:
             fn += 1
             continue
@@ -641,3 +676,36 @@ def evaluate_detections(detections: Dict[str, Detection], annotations: pd.DataFr
     accuracy = tp / num_annotations if num_annotations > 0 else 0
 
     return accuracy, tpr, fpr, fnr
+
+
+def detect_on_dataset(
+        test_imgs: ImageDataset, 
+        query_imgs: ImageDataset,
+        annotations_dir: Path,
+        sift_hps: Dict = {},
+        ransac_hps: Dict = {},
+        lowe_threshold: float = 0.7,
+        min_match_count: int = 10, 
+        verbose: bool = False,
+        draw: bool = False,
+    ) -> Tuple[float, ...]:
+
+    num_images = len(test_imgs)
+    acc_lst, tpr_list, fpr_lst, fnr_lst = [], [], [], []
+    detector = ObjectDetector(query_imgs, sift_hps, verbose=verbose, 
+                              ransac_hyperparams=ransac_hps)
+
+    # Iterate through each test image and detect objects in it. Compare these detctions
+    # to the ground truth annotations.
+    for i, (img, img_path) in enumerate(test_imgs):
+        annotations_path = annotations_dir / img_path.with_suffix(".csv").name
+        img_annotations = pd.read_csv(annotations_path)
+
+        print(flush=True)
+        logger.info(f"{i+1}/{num_images} - Detecting objects in {img_path.stem}")
+        detections = detector.detect(img, lowe_threshold, min_match_count, draw)
+
+        acc, tpr, fpr, fnr = evaluate_detections(detections, img_annotations)
+        acc_lst.append(acc); tpr_list.append(tpr); fpr_lst.append(fpr); fnr_lst.append(fnr)
+
+    return np.mean(acc_lst), np.mean(tpr_list), np.mean(fpr_lst), np.mean(fnr_lst)
