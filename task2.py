@@ -12,32 +12,7 @@ CCOEFF_NORMED_THRESHOLD = 0.8
 
 THRESHOLD_SCALE = 0.8
 
-# 70000,
-# 2000,
-# 2000,
-# 500,
-# 100]
-THRESHOLDS = [
-    10000000,
-    5000000,
-    1500000,
-    165000,
-    100000]
-# THRESHOLDS = [
-#     5.583934789155553e+18,
-#     4.315835850200041e+17,
-#     3.199918135465214e+16,
-#     2178193442070275.0,
-#     138047930383868.83
-# ]
-# THRESHOLDS = [
-#     0.95,
-#     0.93,
-#     0.9,
-#     0.85,
-#     0.8]
-
-def predict_all_templates(img_pyr: list[MatLike], 
+def predict_all_templates(img_pyr: list[MatLike],
                           templates: list[tuple[str, list[MatLike]]]
                           ) -> tuple[list[str], list[float], list[np.ndarray]]:
     """
@@ -189,10 +164,25 @@ def correlate_ssd_normed(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
     norm_image = (img - np.mean(img)) / np.std(img)
     norm_template = (template - np.mean(template)) / np.std(template)
-    return correlate_ssd(norm_image, norm_template)
+    ssd = correlate_ssd(norm_image, norm_template)
 
-import numpy as np
-import scipy.fftpack as fp
+
+    
+
+    # _, match_val, _, match_loc = cv2.minMaxLoc(norm_cc)
+    # x, y = match_loc
+    # t_width, t_height = template.shape
+    # matched_region = norm_img[x : x + t_width, y : y + t_height]
+    # normed_match_val = (normed_match_val - np.mean(matched_region)) / np.std(matched_region)
+    # np.corrcoef
+
+    t_width, t_height = template.shape
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(ssd)
+    x, y = min_loc
+    matched_region = norm_image[x : x + t_width, y : y + t_height]
+
+    normed_val = np.corrcoef(matched_region, norm_template)[x][y] * max_val
+    return min_loc, normed_val
 
 def phase_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     norm_img = (img - np.mean(img)) / np.std(img)
@@ -206,6 +196,172 @@ def phase_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     
     norm_cc = np.fft.irfft2(norm_cc_ft)
     return norm_cc
+
+from scipy.signal import correlate
+from pandas.core.window.rolling import Rolling
+import scipy
+
+def normed_cross_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
+    """
+    """
+
+    # # Normalise image and template
+    # norm_img = img - np.mean(img)
+    # norm_template = template - np.mean(template)
+
+    # img_std  = np.std (img)
+    # templace_std  = np.std (template)
+    
+    # corr = correlate(norm_img, norm_template, mode = 'valid' )
+    # corr = corr / (img.size * img_std * templace_std)
+    # return corr
+
+    
+    
+    # t_width, t_height = template.shape
+    # mean_filter = np.ones_like(template) / (t_width * t_height)
+    # img_means = convolve(img, mean_filter, mode='same')
+    # img_normed = img - img_means
+
+    # template_normed = template - np.mean(template)
+
+    # numerator = correlate(img_normed, template_normed, mode='valid')
+    # denominator = np.sqrt(correlate(np.square(img_normed), np.square(template_normed), mode='valid'))
+    # return numerator / denominator
+
+
+
+    # corr = convolve(img, template, mode='full')
+    # img_sums = convolve(img, np.ones_like(template))
+    # img_sqsums = convolve(np.square(img), np.ones_like(template))
+
+    # scale = 1.0 / template.size
+    # template_sum = np.sum(template)
+    # template_sqsum = np.sum(np.square(template))
+    # template_sqsum_sum = template_sqsum - scale * template_sum * template_sum
+    # template_sum *= scale
+    
+    # numerator = correlate(img_sums, img_sqsums)
+
+    # # Normalise image and template
+    # norm_img = img - np.mean(img)
+    # norm_template = template - np.mean(template)
+
+    # corr = correlate(img, template, mode='same')
+    # image_sums = cv2.integral(img)[1:, 1:]
+    # image_sqsums = cv2.integral(np.square(img.astype(np.float32)))[1:, 1:]
+
+    # # Calculate scale factor
+    # scale = 1 / (template.shape[0] * template.shape[1])
+
+    # # Compute normalized cross-correlation coefficient (NCC)
+    
+    # templ_sum = np.sum(template)
+    # templ_sqsum = np.sum(np.square(template.astype(np.float32)))
+
+    # # Adjust template sums based on size
+    # templ_sqsum -= scale * templ_sum * templ_sum
+    # templ_sum *= scale
+
+    # # Compute NCC
+    # # corr = np.pad(corr, pad_width=1, mode='constant')
+    # # corr = np.pad(corr, pad_width=((0, 1), (0, 1)), mode='constant')
+    # ncc = (corr - templ_sum * image_sums) / np.sqrt(templ_sqsum * (image_sqsums - np.square(image_sums)))
+    # return ncc
+
+
+    # t_width, t_height = template.shape
+    # mean_filter = np.ones_like(template) / (t_width * t_height)
+    # sharpness_filter = np.ones_like(template) - mean_filter
+
+    # img_sharpness = correlate(img, sharpness_filter, mode='valid')
+    # corr = correlate(img, template, mode='valid')
+    # corr_sharpness = correlate(corr, sharpness_filter, mode='same')
+
+    # ccoeff = corr_sharpness - np.mean(template) * img_sharpness
+
+    # return ccoeff
+
+    # def func(arr):
+    #     if arr.shape == template.shape:
+    #         # print("array shape: ", arr.shape)
+    #         return np.corrcoef(arr, template)[0,1]
+    #     else:
+    #         return 0#arr.shape[1]
+
+    test = np.lib.stride_tricks.as_strided(img, shape=template.shape)
+    # print(test.shape)
+    # dataframe = pd.DataFrame(img)
+    # print(dataframe.shape)
+    # print(template.shape)
+    # rw = dataframe.rolling(window = template.shape[0], method = "table")
+    # df_res = rw.apply(func, engine = "numba", raw = True).dropna(how='all')
+    # df_res = df_res.to_numpy()
+    # print("max: ", np.max(df_res))
+    # print(df_res[75:125, 0:50])
+    # # df_res = dataframe.rolling(4).apply(lambda x: np.corrcoef(x,template)[0,1],raw=False ).dropna(how='all',axis=0)
+    # return df_res
+    
+    # sub_windows = (
+    #         # expand_dims are used to convert a 1D array to 2D array.
+    #         np.expand_dims(np.arange(template.shape[0]), 0) +
+    #         np.expand_dims(np.arange(template.shape[1] + 1), 0).T
+    #     )
+    # print (img[sub_windows])
+    
+    print("aaa",test.shape)
+    pearsonr = np.vectorize(scipy.stats.pearsonr,
+                signature='(n),(n)->(),()')
+    f = pearsonr(test, template)
+    print(np.array(f).shape)
+    # f = np.apply_over_axes(pearsonr, test.strides, [0,2])
+    return f
+    # pearsonr(test)
+
+#np.corrcoef(x, template)
+    # corr = x.rolling(4).apply(lambda x: np.corrcoef(x,y)[0,1],raw=False ).dropna(how='all',axis=0)
+
+
+    #  # Rowwise mean of input arrays & subtract from input arrays themeselves
+    # A_mA = A - A.mean(1)[:, None]
+    # B_mB = B - B.mean(1)[:, None]
+
+    # # Sum of squares across rows
+    # ssA = (A_mA**2).sum(1)
+    # ssB = (B_mB**2).sum(1)
+
+    # # Finally get corr coeff
+    # return np.dot(A_mA, B_mB.T) / np.sqrt(np.dot(ssA[:, None],ssB[None]))
+
+
+
+    mean_filter = np.ones_like(template) / (template.size)
+    img_means = convolve(img, mean_filter, mode='same')
+    img_0mean = img - img_means
+    template_0mean = template - np.mean(template)
+
+    # img_std  = np.std (img)
+    img_std_dvns = convolve(np.square(img_0mean), mean_filter, mode='valid')
+    img_std_dvns = np.sqrt(np.abs(img_std_dvns))
+    template_std_dvns = np.std(template)
+
+    numerator = correlate(img_0mean, template_0mean, mode='valid')
+    denominator = img_std_dvns * template_std_dvns
+
+    return numerator / denominator
+    
+
+    sliding_sum_of_squares = fftconvolve(np.square(img), np.ones(template.shape), mode='valid')
+    cross_correlation = fftconvolve(img, template[::-1, ::-1], mode='valid')
+    sum_of_template_squares = np.sum(np.square(template))
+    ssd = sliding_sum_of_squares  + sum_of_template_squares - 2 * cross_correlation
+
+    templace_std  = np.std (template)
+    
+    corr = correlate(img_0mean, template_0mean, mode = 'valid' )
+    corr = corr / (img.size * img_std * templace_std)
+    return corr
+
 
 
 def template_pyramid_by_classname(dataset_folder: Path,
@@ -221,6 +377,14 @@ def template_pyramid_by_classname(dataset_folder: Path,
         template = cv2.imread(str(path))
         template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
         
+        # icon_bgra = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        # alpha = icon_bgra[:, :, 3]
+        # alpha_mask = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+        # icon_bgr = cv2.cvtColor(icon_bgra, cv2.COLOR_BGRA2BGR)
+        # icon_masked: np.ndarray = cv2.bitwise_and(icon_bgr, alpha_mask)
+        # # icon_masked = cv2.copyMakeBorder(icon_masked, 1, 1, 1, 1, cv2.BORDER_CONSTANT, None, (0, 0, 0))
+        # template = cv2.cvtColor(icon_masked, cv2.COLOR_BGR2GRAY)
+
         # Gaussian pyramid with custom scaling
         width, height = template.shape
         template_pyr = []
@@ -299,6 +463,7 @@ def path_lexigraphical_order(path: Path) -> tuple[int, str]:
 
 def evaluation_metrics(predicted_bounds: dict[str, np.ndarray], 
                        annotated_bounds: list[tuple[str, np.ndarray]],
+                       template_metrics: dict[str, np.ndarray],
                        pred_threshold: float = 0.5
                        ) -> tuple[float, float, float, float]:
     """
@@ -312,13 +477,16 @@ def evaluation_metrics(predicted_bounds: dict[str, np.ndarray],
     for classname, bound in annotated_bounds:
         if classname not in predicted_bounds:
             num_fn += 1
+            template_metrics[classname][2] += 1 
             continue
 
         pred_box = predicted_bounds[classname]
         iou = calculate_iou(pred_box, bound)
         if iou >= pred_threshold:
+            template_metrics[classname][0] += 1 
             num_tp += 1
         else:
+            template_metrics[classname][1] += 1 
             num_fp += 1
 
     accuracy = num_tp / num_boxes if num_boxes != 0 else 0

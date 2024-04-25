@@ -47,6 +47,11 @@ pip install numpy pandas opencv-python ipykernel matplotlib
 python main.py --Task1Dataset ./Task1Dataset
 ```
 
+To run task two:
+```shell
+time python main.py --Task2Dataset ./Task2Dataset --IconDataset ./IconDataset/
+```
+
 ## Task 1 
 Calculate the (smaller) angle between two lines in a black and white image.
 
