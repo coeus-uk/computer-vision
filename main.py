@@ -10,76 +10,75 @@ import utils
 
 
 def testTask1(folderName: str) -> int:
-    canny_testing = False
-    dataset = pd.read_csv(f"{folderName}/list.txt")
-    total_error = 0
+    dataset_path = Path(folderName, "list.txt")
+    dataset = pd.read_csv(str(dataset_path))
 
-    gauss_kernel_size  = task1.PARAMS.canny_gauss_kernel_size
-    gauss_sigma = task1.PARAMS.canny_gauss_sigma
-    gauss_low_threshold = task1.PARAMS.canny_gauss_low_threshold
-    gauss_high_threshold = task1.PARAMS.canny_gauss_high_threshold
+    our_total_error = 0 # error counter
+    hough_lines = 0 # inistaite hough_lines
+    thresh = 0 # hough threshold
+    counter = 0 # initiate conuter for dynamic param assignment
+    best_hough = None # keep track of best hough model, initiate to None
 
+    for (i, row) in enumerate(dataset.itertuples()):
+        filename, correct_answer = row.FileName, row.AngleInDegrees
 
-    print("Precalculate edges for each image...") 
-    images_edges = []
+        # Read in image, importantly with intensity values 0-255 not 0-1
+        img = cv2.imread(str(Path(folderName, filename)), cv2.IMREAD_GRAYSCALE)
+        
+        #Canny Step 
+        edges = utils.canny(img, gauss_kernel_size=5, sigma=35, low_threshold=50, high_threshold=150)
 
-    if canny_testing:
-        gauss_kernel_size = np.arange(5, 11, 2)
-        gauss_sigma = np.arange(10, 20, 1) 
-        gauss_low_threshold = np.arange(30, 60, 10)  
-        gauss_high_threshold = np.arange(60, 120, 10)
-        #print(img)
-
-        for row in dataset.itertuples():
-            filename, correct_answer = row.FileName, row.AngleInDegrees
-            img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
-
-            images_edges.append((img, correct_answer))
-        canny_test = task1.try_canny_params(images_edges, gauss_kernel_size, gauss_sigma,
-                                            gauss_low_threshold, gauss_high_threshold)
-    else:
-        for row in dataset.itertuples():
-            filename, correct_answer = row.FileName, row.AngleInDegrees
-            img = cv2.imread(f"Task1Dataset/{filename}", cv2.IMREAD_GRAYSCALE)
-            edges = utils.canny(img, gauss_kernel_size, gauss_sigma, 
-                                    gauss_low_threshold, gauss_high_threshold)
-
-
-            images_edges.append((edges, correct_answer))
-
-        # Just testing parameters for now
-        if True:
-            # Adding step to everything because we don't want to include the first 
-            #   elem (0) and we want to include last elem. It becomes (0, end].
-            #rhos = np.arange(0, 0.5, 0.05) + 0.05
-            rhos = np.array([1])
-            thetas = np.arange(1, 2, 0.01) 
-            thresholds = np.arange(80, 85, 5) #+ 0.1
-
-            task1.try_params(images_edges, rhos, thetas, thresholds)
-        else:
-            hough_threshold = task1.PARAMS.hough_threshold
-            hough_theta_res = task1.PARAMS.hough_theta_res
-            hough_rho_res = task1.PARAMS.hough_rho_res
-    
-            results = np.zeros((2, len(images_edges)))
-
-            for (img_index, (image, correct_answer)) in enumerate(images_edges):
-
-                angle = task1.get_angle_between_lines(image, hough_threshold,
-                                                    hough_theta_res, hough_rho_res)
-                error = abs(angle - correct_answer)
-                results[0][img_index] = angle
-                results[1][img_index] = error
+        #Hough Step
+        hough_lines = utils.hough_lines(edges, threshold = 90, theta_res= 1.668, rho_res=1)
+        best_hough = hough_lines
+        
+        # Dynamic hyperparameter aassignment
+        while len(hough_lines) < 4 or len(hough_lines) > 6:
+            if counter == 100: break 
+            counter += 1
+            if len(hough_lines) > 6: 
+                thresh += 1
+                hough_lines = utils.hough_lines(edges, threshold = 90 + thresh, theta_res= 1.668, rho_res=1)
+                best_hough = best_hough if np.argmin((abs(len(best_hough) - 4), abs(len(hough_lines) - 4), abs(len(best_hough) - 6), abs(len(hough_lines) - 6)))%2 ==0 else hough_lines
             
-                # print("Canny Params= {combos}")
-                # print(f"results = {results[0]}")
-                # print(f"errors = {results[1]}")
-                # print(f"Total error: {np.sum(results[1])}")
-        # Write code to process the image
-        # Write your code to calculate the angle and obtain the result as a list predAngles
-        # Calculate and provide the error in predicting the angle for each image
-    return total_error
+            else:
+                thresh -= 1
+                hough_lines = utils.hough_lines(edges, threshold = 90 + thresh, theta_res= 1.668, rho_res=1)
+                best_hough = best_hough if np.argmin((abs(len(best_hough) - 4), abs(len(hough_lines) - 4), abs(len(best_hough) - 6), abs(len(hough_lines) - 6)))%2 ==0 else hough_lines
+
+        
+        counter = 0
+        line_angles = []
+        for rho, theta in best_hough:
+            # Handle whether the line is in the positive or negative x
+            #theta += np.pi
+            if (rho < 0):
+                #print("error:", filename)
+                theta += np.pi
+
+            # theta = theta % (np.pi)
+            line_angles.append(theta)
+
+        if(len(line_angles) < 2):
+            print(f"Skipping  - need at least 2 lines")
+
+        # Calculate difference of angles and choose the smaller angle
+        print(f"max line {np.rad2deg(max(line_angles))} | min line {np.rad2deg(min(line_angles))}")
+        
+        angle1 = abs(max(line_angles)) - min(line_angles)
+        angle2 = (2 * np.pi) - angle1
+        print("angle1: " , np.rad2deg(angle1) , "angle2: ", np.rad2deg(angle2))
+        
+        angle_between_lines = min(angle1, angle2)
+        angle_between_lines = np.round(np.rad2deg(angle_between_lines))
+
+        print(f"Our Prediction: {angle_between_lines} -- Correct_answer: {correct_answer} -- Errors: {np.abs(correct_answer-angle_between_lines)}")
+        our_total_error += np.abs(correct_answer-angle_between_lines)
+        print("\n")
+
+        print(f"Our Total Error: {our_total_error}")
+    
+    return our_total_error
 
 
 def testTask2(iconDir: str, testDir: str) -> tuple[float, float, float, float]:
