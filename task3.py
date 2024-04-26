@@ -74,17 +74,20 @@ class ImageDataset:
             self.index += 1
 
             img = cv.imread(str(img_path))
-            # img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            # img = cv.GaussianBlur(img, (5, 5), 1)
-
             return img, img_path
         else:
             raise StopIteration
         
     def __len__(self) -> int:
+        """
+        Returns the number of images in the directory.
+        """
         return len(self.img_paths)
         
     def print(self, i: int):
+        """
+        Shows the image at index `i` in the directory.
+        """
         assert 0 <= i < len(self.img_paths)
         img_path = self.img_paths[i]
         
@@ -169,6 +172,10 @@ class RANSAC(IModel):
         self.confidence = confidence
 
     def fit(self, src: np.ndarray, dst: np.ndarray) -> Tuple[Self, np.ndarray]:
+        """
+        Fit a model on the `src` and `dst` datapoints, rejecting outliers and keeping
+        inliers.
+        """
         assert(src.shape == dst.shape)
         num_points = src.shape[1]
 
@@ -179,10 +186,12 @@ class RANSAC(IModel):
         while num_iterations > iterations_done:
             permuted_idxs = np.random.permutation(num_points)
 
+            # Sample a random, small subset of datapoints.
             sample_idxs = permuted_idxs[:self.min_datapoints]
             src_samples = src[:, sample_idxs]
             dst_samples = dst[:, sample_idxs]
 
+            # Find a model on the sampled datapoints.
             model = self.model_cls(**self.model_hyperparams)
             model.fit(src_samples, dst_samples)
 
@@ -190,12 +199,16 @@ class RANSAC(IModel):
             src_non_samples = src[:, remaining_idxs]
             dst_non_samples = dst[:, remaining_idxs]
 
+            # Calculate the difference between the remaining samples
+            # and the model's prediction.
             losses = self.loss(dst_non_samples, model.transform(src_non_samples))
             within_threshold = losses < self.threshold
 
+            # Inliers are datapoints which lie within the threshold.
             inlier_idxs = remaining_idxs[within_threshold]
             inlier_count = len(inlier_idxs)
 
+            # If this is the best model so far, save it.
             if inlier_count > self.max_inliers:
                 self.max_inliers = inlier_count
 
@@ -214,8 +227,8 @@ class RANSAC(IModel):
                 matches_mask.fill(0)
                 matches_mask[inlier_idxs] = 1
 
-            prob_outlier = 1 - (inlier_count / num_points)
             iterations_done += 1
+            prob_outlier = 1 - (inlier_count / num_points)
 
             try:
                 # Adaptively determine the number of iterations.
@@ -229,9 +242,15 @@ class RANSAC(IModel):
         return self, matches_mask
 
     def transform(self, src: np.ndarray) -> np.ndarray:
+        """
+        Calls `transform` on the best model.
+        """
         return self.best_model.transform(src)
     
     def reset(self):
+        """
+        Resets RANSAC back to its initial state.
+        """
         self.best_model = None
         self.max_inliers = self.inliers_threshold
 
@@ -303,9 +322,15 @@ class AlignedBoundingBox:
     
     @property
     def area(self) -> float:
+        """
+        Computes the area of the bounding box.
+        """
         return (self.right - self.left) * (self.bottom - self.top)
     
     def compute_iou(self, other: Self) -> float:
+        """
+        Computes the intersection over union between itself and an `other` bounding box.
+        """
         x_left = max(self.left, other.left)
         y_top = max(self.top, other.top)
         x_right = min(self.right, other.right)
@@ -315,12 +340,9 @@ class AlignedBoundingBox:
         if x_right < x_left or y_bottom < y_top:
             return 0.0
         
-        intersection_area = (x_right - x_left) * (y_bottom - y_top)
-        self_area = (self.right - self.left) * (self.bottom - self.top)
-        other_area = (other.right - other.left) * (other.bottom - other.top)
-
         # Compute IoU
-        return intersection_area / (self_area + other_area - intersection_area)
+        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+        return intersection_area / (self.area + other.area - intersection_area)
 
 
 class BoundingBox:
@@ -354,12 +376,18 @@ class BoundingBox:
 
 @dataclass
 class Detection:
+    """
+    Dataclass holding attributes of an object detection.
+    """
 
     img_path: Path
     bounding_box: BoundingBox | AlignedBoundingBox
 
     @property
     def icon_name(self) -> str:
+        """
+        Returns the icon named parsed from `img_path`.
+        """
         filename = self.img_path.stem
         match = re.search(r'\d+-(.*)', filename)
 
@@ -462,7 +490,7 @@ class ObjectDetector:
                 # Use RANSAC to reject outliers and estimate a homography for the
                 # the remaining sets of inliers.
                 self.ransac.reset()
-                model, matches_mask = self.ransac.fit(src_points, dst_points) 
+                model, matches_mask = self.ransac.fit(src_points, dst_points)
 
                 if model.best_model is None:
                     logger.info("No transform found.")
@@ -482,21 +510,38 @@ class ObjectDetector:
                 continue
 
             axis_aligned_bbox = BoundingBox(oriented_bounding_points).align_with_axis()
+            detection = Detection(img_path, axis_aligned_bbox)
 
-            if draw and axis_aligned_bbox.area > 10:
+            if draw and axis_aligned_bbox.area > 50:
                 # Draw bounding box.
                 polyline_train_img = cv.polylines(
-                    train_img.copy(), [oriented_bounding_points], True, 255, 3, cv.LINE_AA)
+                    train_img, [oriented_bounding_points], True, 255, 2, cv.LINE_AA)
+                
+                # Label the bounding box with the icon name.
+                label_position = (axis_aligned_bbox.top, axis_aligned_bbox.left)
+                label_position = (label_position[0], label_position[1] - 5)
+                
+                # Put the text on the image
+                cv.putText(
+                    polyline_train_img,                  
+                    detection.icon_name.upper(),         
+                    label_position,                      
+                    cv.FONT_HERSHEY_PLAIN,               
+                    1,                                   
+                    (0,0,0),                        
+                    1,                              
+                    cv.LINE_AA
+                )                          
                 
                 # Draw lines connnecting matches.
                 matches_img = cv.drawMatches(
                     query_img, kp_query, polyline_train_img, kp_train, good_matches, 
                     None, (0, 255, 0), None, matches_mask, 2)
                 
-                plt.imshow(matches_img)
+                # plt.imshow(matches_img)
+                plt.imshow(polyline_train_img)
                 plt.show()
 
-            detection = Detection(img_path, axis_aligned_bbox)
             detections[detection.icon_name] = detection
 
         return detections
@@ -521,6 +566,9 @@ class ObjectDetector:
     
 
 def evaluate_detections(detections: Dict[str, Detection], annotations: pd.DataFrame, iou_threshold: float = 0.5):
+    """
+    Evaluates a set of object detections against ground-truth annotations.
+    """
     tp, fp, fn = 0, 0, 0
     num_annotations = len(annotations)
 
