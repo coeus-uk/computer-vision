@@ -7,6 +7,10 @@ from pathlib import Path
 import task1
 import task2
 import utils
+import task3
+
+from pathlib import Path
+from task3 import ImageDataset
 
 
 def testTask1(folderName: str) -> int:
@@ -122,7 +126,55 @@ def testTask3(iconFolderName, testFolderName):
     # For each predicted class, check accuracy with the annotations
     # Check and calculate the Intersection Over Union (IoU) score
     # based on the IoU determine accuracy, TruePositives, FalsePositives, FalseNegatives
-    return (Acc,TPR,FPR,FNR)
+    query_img_dir = Path(iconFolderName, "png")
+    test_img_dir = Path(testFolderName, "images")
+    test_annotations_dir = Path(testFolderName, "annotations")
+
+    test_images = ImageDataset(test_img_dir, file_ext="png")
+    query_images = ImageDataset(query_img_dir, file_ext="png")
+
+    params = {
+        "sift_n_features": 0,
+        "sift_n_octave_layers": 3, 
+        "sift_contrast_threshold": 0.005, 
+        "sift_edge_threshold": 11.777774652601527, 
+        "sift_sigma": 1.8071337661481155, 
+        "ransac_reproj_threshold": 1.0, 
+        "ransac_min_datapoints": 4, 
+        "ransac_inliers_threshold": 0, 
+        "ransac_confidence": 0.9, 
+        "lowe_threshold": 0.5,
+        "min_match_count": 4
+    }
+
+    sift_hps = {
+            'nfeatures': params['sift_n_features'],
+            'nOctaveLayers': params['sift_n_octave_layers'],
+            'contrastThreshold': params['sift_contrast_threshold'],
+            'edgeThreshold': params['sift_edge_threshold'],
+            'sigma': params['sift_sigma'],
+        }
+
+    ransac_hps = {
+        'inliers_threshold': params['ransac_inliers_threshold'],
+        'min_datapoints': params['ransac_min_datapoints'],
+        'reproj_threshold': params['ransac_reproj_threshold'],
+        'confidence': params['ransac_confidence']
+    }
+
+    lowe_ratio = params['lowe_threshold']
+    min_match_count = params['min_match_count']
+
+    return task3.detect_on_dataset(
+        test_images, 
+        query_images, 
+        test_annotations_dir,
+        sift_hps,
+        ransac_hps,
+        lowe_ratio,
+        min_match_count,
+        verbose=True,
+    )
 
 
 if __name__ == "__main__":
