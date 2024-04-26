@@ -34,15 +34,10 @@ source bin/activate
 
 3. Install dependencies
 ```shell
-pip install matplotlib pandas opencv-python
+pip install matplotlib pandas opencv-python scipy
 ```
 
-To use the jupyter notbook you'll need some more
-```shell
-pip install numpy pandas opencv-python ipykernel matplotlib
-```
-
-4. Run the specified task by providive the correct dataset. E.g. to run task 1
+1. Run the specified task by providive the correct dataset. E.g. to run task 1
 ```shell
 python main.py --Task1Dataset ./Task1Dataset
 ```
