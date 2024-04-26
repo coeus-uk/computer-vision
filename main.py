@@ -2,7 +2,6 @@ import argparse
 import pandas as pd
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 
 import task1
@@ -84,24 +83,29 @@ def testTask1(folderName: str) -> int:
 
 
 def testTask2(iconDir: str, testDir: str) -> tuple[float, float, float, float]:
-    # assume that test folder name has a directory annotations with a list of csv files
-    # load train images from iconDir and for each image from testDir, match it with each class from the iconDir to find the best match
-    # For each predicted class, check accuracy with the annotations
-    # Check and calculate the Intersection Over Union (IoU) score
-    # based on the IoU determine accuracy, TruePositives, FalsePositives, FalseNegatives
-    # image_pyramid_levels = 5
+    GAUSS_SIGMA = 5
+    GAUSS_KSIZE = (5,5)
+    IMG_PYRAMID_SIZE = 1
+    NMS_THRESHOLD = 0.005
+
     images = task2.images_with_annotations(Path(testDir))
     templates = task2.template_pyramid_by_classname(Path(iconDir, "png"))
     templates = [(classname, pyr) for (classname, pyr) in templates]
+    template_metrics = {classname:np.array([0, 0, 0]) for (classname, _) in templates}
     results: list[tuple[float, float, float, float]] = []
 
-    for img, annotations in images:
-        img_pyr = [img]#task2.gaussian_pyrarmid(img, image_pyramid_levels)
+    for i, (img, annotations) in enumerate(images):
+        gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        gray_img = cv2.GaussianBlur(gray_img, GAUSS_KSIZE, GAUSS_SIGMA)
+        img_pyr = task2.gaussian_pyrarmid(gray_img, IMG_PYRAMID_SIZE)
+
         classnames, scores, pred_boxes = task2.predict_all_templates(img_pyr, templates)
-        task2.non_max_suppression(pred_boxes, scores, classnames)
+        task2.non_max_suppression(pred_boxes, scores, classnames, NMS_THRESHOLD)
         task2.annotate_predictions(img, classnames, scores, pred_boxes)
-        preds = dict(zip(classnames, pred_boxes))
-        metrics = task2.evaluation_metrics(preds, annotations)
+        cv2.imwrite(f"{testDir}/results/test_image_{i+1}.png", img)
+
+        predicted_bounds = dict(zip(classnames, pred_boxes))
+        metrics = task2.evaluation_metrics(predicted_bounds, annotations, template_metrics)
         results.append(metrics)
 
     (acc, tpr, fpr, fnr) = [sum(values) / len(values) for values in zip(*results)]

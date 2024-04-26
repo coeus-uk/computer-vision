@@ -1,16 +1,12 @@
 import pandas as pd
 import cv2
 import numpy as np
-from scipy.signal import fftconvolve, convolve
+from scipy.signal import fftconvolve, convolve, correlate
 from pathlib import Path
 from cv2.typing import MatLike
 from typing import Iterator
 
 TEMPLATE_PYRAMID_SCALES = [5/8, 4/8, 3/8, 2/8, 1/8]
-
-CCOEFF_NORMED_THRESHOLD = 0.8
-
-THRESHOLD_SCALE = 0.8
 
 def predict_all_templates(img_pyr: list[MatLike],
                           templates: list[tuple[str, list[MatLike]]]
@@ -53,9 +49,13 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike]
             # Perform template matching
             # result = cv2.matchTemplate(norm_image, norm_template,
             #                             cv2.TM_SQDIFF_NORMED) # <- this isn't allowed
+            # set background to black
+            # img_layer[img_layer > 250] = 0s
             result = phase_correlation(img_layer, template_layer)
+            # result = correlate_ssd_normed2(img_layer, template_layer)
             # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_CCOEFF_NORMED)
-            # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_SQDIFF)
+            # result = cv2.matchTemplate(img_layer, template_layer, cv2.TM_SQDIFF_NORMED)
+            # result = correlate_naive(img_layer, template_layer)
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
             score = max_val
@@ -64,22 +64,21 @@ def predict_bounding_box(img_pyr: list[MatLike], template_pyr: list[MatLike]
                 img_sf = 2 ** i_level
                 left, top = pred_top_left
                 left, top = (int(left * img_sf), int(top * img_sf))
-                right = left + template_w
-                bot = top + template_h
+                right = left + (template_w * img_sf)
+                bot = top + (template_h * img_sf)
                 pred_box = np.array([top, bot, left, right])
                 # print(f"Match found for {classname} at level: {i_level} with score: {score} > 0.8, preds = {pred_box}")
                 yield (score, pred_box)
 
 def non_max_suppression(preds: list[np.ndarray], scores: list[float],
-                        classnames: list[str]) -> None:
+                        classnames: list[str], iou_threshold: float = 0.005
+                        ) -> None:
     """
     Applies non-maximal suppression to a list of bounding boxes.
     Detects overlapping bounding boxes and discards the one with a lower score.
     """
     assert len(preds) == len(scores)
     
-    # Tolerance for very slight overlaps
-    iou_threshold = 0.005 
     eval_order = np.argsort(np.array(scores))[::-1]
     boxes_to_remove = set()
 
@@ -121,17 +120,27 @@ def calculate_iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
     return intersection_area / union_area
 
 def annotate_predictions(img: MatLike, classnames: list[str],
-                         scores: list[int], pred_boxes: np.ndarray) -> None:
+                         scores: list[int], pred_boxes: list[np.ndarray]
+                        ) -> None:
     """
     Draw a given collection of bounding boxes onto a destination image. 
     """
-    black: cv2.Scalar = (0, 255, 0)
+    black: cv2.Scalar = (0, 0, 0)
     for classname, score, pred_box in zip(classnames, scores, pred_boxes):
         top_left = (pred_box[2], pred_box[0])
         bot_right = (pred_box[3], pred_box[1])
         cv2.rectangle(img, top_left, bot_right, color=black, thickness=1)
         cv2.putText(img, f"{classname}({score:.2f})", top_left, 
                     cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=black)
+
+def correlate_naive(img: np.ndarray, template: np.ndarray
+                    ) -> np.ndarray: 
+    """
+    2D discrete correlation is simply 2D discrete convolution with a flipped template.
+    """
+    result = convolve(img, template[::-1, ::-1], mode='valid')
+    # result = cv2.normalize(result, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    return result
 
 def correlate_ssd(img: np.ndarray, template: np.ndarray
                  ) -> np.ndarray:
@@ -155,7 +164,7 @@ def correlate_ssd(img: np.ndarray, template: np.ndarray
     sum_of_template_squares = np.sum(np.square(template))
     ssd = sliding_sum_of_squares  + sum_of_template_squares - 2 * cross_correlation
 
-    return ssd
+    return ssd, sliding_sum_of_squares
 
 def correlate_ssd_normed(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
@@ -166,23 +175,38 @@ def correlate_ssd_normed(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     norm_template = (template - np.mean(template)) / np.std(template)
     ssd = correlate_ssd(norm_image, norm_template)
 
+    return ssd
 
+def correlate_ssd_normed2(img: np.ndarray, template: np.ndarray) -> np.ndarray:
+    # norm_image = img - np.mean(img)) / np.std(img)
+    # norm_template = (template - np.mean(template)) / np.std(template)
+
+    # ssd, sliding_sum_of_squares = correlate_ssd_normed(img, template)
+
+    # norm_factor = np.sqrt(sliding_sum_of_squares * np.sum(np.square(template)))
+
+    # return ssd / norm_factor
+    img = img + 1
+    template = template + 1
+
+    image_height, image_width = img.shape
+    template_height, template_width = template.shape
+    result_height = image_height - template_height + 1
+    result_width = image_width - template_width + 1
+    normed_ssd_result = np.zeros((result_height, result_width), dtype=np.float32)
+    template_sq_sum = np.sum(np.square(template))
     
+    for y in range(result_height):
+        for x in range(result_width):
+            window = img[y:y+template_height, x:x+template_width]
+            window_sq_sum = np.sum(np.square(window))
+            diff = np.subtract(window, template)
 
-    # _, match_val, _, match_loc = cv2.minMaxLoc(norm_cc)
-    # x, y = match_loc
-    # t_width, t_height = template.shape
-    # matched_region = norm_img[x : x + t_width, y : y + t_height]
-    # normed_match_val = (normed_match_val - np.mean(matched_region)) / np.std(matched_region)
-    # np.corrcoef
+            denom = np.sqrt(window_sq_sum * template_sq_sum)
 
-    t_width, t_height = template.shape
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(ssd)
-    x, y = min_loc
-    matched_region = norm_image[x : x + t_width, y : y + t_height]
-
-    normed_val = np.corrcoef(matched_region, norm_template)[x][y] * max_val
-    return min_loc, normed_val
+            numerator = np.sum(np.square(diff))
+            normed_ssd_result[y, x] = numerator / denom    
+    return normed_ssd_result
 
 def phase_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     norm_img = (img - np.mean(img)) / np.std(img)
@@ -197,143 +221,9 @@ def phase_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     norm_cc = np.fft.irfft2(norm_cc_ft)
     return norm_cc
 
-from scipy.signal import correlate
-from pandas.core.window.rolling import Rolling
-import scipy
-
 def normed_cross_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
     """
-
-    # # Normalise image and template
-    # norm_img = img - np.mean(img)
-    # norm_template = template - np.mean(template)
-
-    # img_std  = np.std (img)
-    # templace_std  = np.std (template)
-    
-    # corr = correlate(norm_img, norm_template, mode = 'valid' )
-    # corr = corr / (img.size * img_std * templace_std)
-    # return corr
-
-    
-    
-    # t_width, t_height = template.shape
-    # mean_filter = np.ones_like(template) / (t_width * t_height)
-    # img_means = convolve(img, mean_filter, mode='same')
-    # img_normed = img - img_means
-
-    # template_normed = template - np.mean(template)
-
-    # numerator = correlate(img_normed, template_normed, mode='valid')
-    # denominator = np.sqrt(correlate(np.square(img_normed), np.square(template_normed), mode='valid'))
-    # return numerator / denominator
-
-
-
-    # corr = convolve(img, template, mode='full')
-    # img_sums = convolve(img, np.ones_like(template))
-    # img_sqsums = convolve(np.square(img), np.ones_like(template))
-
-    # scale = 1.0 / template.size
-    # template_sum = np.sum(template)
-    # template_sqsum = np.sum(np.square(template))
-    # template_sqsum_sum = template_sqsum - scale * template_sum * template_sum
-    # template_sum *= scale
-    
-    # numerator = correlate(img_sums, img_sqsums)
-
-    # # Normalise image and template
-    # norm_img = img - np.mean(img)
-    # norm_template = template - np.mean(template)
-
-    # corr = correlate(img, template, mode='same')
-    # image_sums = cv2.integral(img)[1:, 1:]
-    # image_sqsums = cv2.integral(np.square(img.astype(np.float32)))[1:, 1:]
-
-    # # Calculate scale factor
-    # scale = 1 / (template.shape[0] * template.shape[1])
-
-    # # Compute normalized cross-correlation coefficient (NCC)
-    
-    # templ_sum = np.sum(template)
-    # templ_sqsum = np.sum(np.square(template.astype(np.float32)))
-
-    # # Adjust template sums based on size
-    # templ_sqsum -= scale * templ_sum * templ_sum
-    # templ_sum *= scale
-
-    # # Compute NCC
-    # # corr = np.pad(corr, pad_width=1, mode='constant')
-    # # corr = np.pad(corr, pad_width=((0, 1), (0, 1)), mode='constant')
-    # ncc = (corr - templ_sum * image_sums) / np.sqrt(templ_sqsum * (image_sqsums - np.square(image_sums)))
-    # return ncc
-
-
-    # t_width, t_height = template.shape
-    # mean_filter = np.ones_like(template) / (t_width * t_height)
-    # sharpness_filter = np.ones_like(template) - mean_filter
-
-    # img_sharpness = correlate(img, sharpness_filter, mode='valid')
-    # corr = correlate(img, template, mode='valid')
-    # corr_sharpness = correlate(corr, sharpness_filter, mode='same')
-
-    # ccoeff = corr_sharpness - np.mean(template) * img_sharpness
-
-    # return ccoeff
-
-    # def func(arr):
-    #     if arr.shape == template.shape:
-    #         # print("array shape: ", arr.shape)
-    #         return np.corrcoef(arr, template)[0,1]
-    #     else:
-    #         return 0#arr.shape[1]
-
-    test = np.lib.stride_tricks.as_strided(img, shape=template.shape)
-    # print(test.shape)
-    # dataframe = pd.DataFrame(img)
-    # print(dataframe.shape)
-    # print(template.shape)
-    # rw = dataframe.rolling(window = template.shape[0], method = "table")
-    # df_res = rw.apply(func, engine = "numba", raw = True).dropna(how='all')
-    # df_res = df_res.to_numpy()
-    # print("max: ", np.max(df_res))
-    # print(df_res[75:125, 0:50])
-    # # df_res = dataframe.rolling(4).apply(lambda x: np.corrcoef(x,template)[0,1],raw=False ).dropna(how='all',axis=0)
-    # return df_res
-    
-    # sub_windows = (
-    #         # expand_dims are used to convert a 1D array to 2D array.
-    #         np.expand_dims(np.arange(template.shape[0]), 0) +
-    #         np.expand_dims(np.arange(template.shape[1] + 1), 0).T
-    #     )
-    # print (img[sub_windows])
-    
-    print("aaa",test.shape)
-    pearsonr = np.vectorize(scipy.stats.pearsonr,
-                signature='(n),(n)->(),()')
-    f = pearsonr(test, template)
-    print(np.array(f).shape)
-    # f = np.apply_over_axes(pearsonr, test.strides, [0,2])
-    return f
-    # pearsonr(test)
-
-#np.corrcoef(x, template)
-    # corr = x.rolling(4).apply(lambda x: np.corrcoef(x,y)[0,1],raw=False ).dropna(how='all',axis=0)
-
-
-    #  # Rowwise mean of input arrays & subtract from input arrays themeselves
-    # A_mA = A - A.mean(1)[:, None]
-    # B_mB = B - B.mean(1)[:, None]
-
-    # # Sum of squares across rows
-    # ssA = (A_mA**2).sum(1)
-    # ssB = (B_mB**2).sum(1)
-
-    # # Finally get corr coeff
-    # return np.dot(A_mA, B_mB.T) / np.sqrt(np.dot(ssA[:, None],ssB[None]))
-
-
 
     mean_filter = np.ones_like(template) / (template.size)
     img_means = convolve(img, mean_filter, mode='same')
@@ -350,17 +240,16 @@ def normed_cross_correlation(img: np.ndarray, template: np.ndarray) -> np.ndarra
 
     return numerator / denominator
     
+    # sliding_sum_of_squares = fftconvolve(np.square(img), np.ones(template.shape), mode='valid')
+    # cross_correlation = fftconvolve(img, template[::-1, ::-1], mode='valid')
+    # sum_of_template_squares = np.sum(np.square(template))
+    # ssd = sliding_sum_of_squares  + sum_of_template_squares - 2 * cross_correlation
 
-    sliding_sum_of_squares = fftconvolve(np.square(img), np.ones(template.shape), mode='valid')
-    cross_correlation = fftconvolve(img, template[::-1, ::-1], mode='valid')
-    sum_of_template_squares = np.sum(np.square(template))
-    ssd = sliding_sum_of_squares  + sum_of_template_squares - 2 * cross_correlation
-
-    templace_std  = np.std (template)
+    # templace_std  = np.std (template)
     
-    corr = correlate(img_0mean, template_0mean, mode = 'valid' )
-    corr = corr / (img.size * img_std * templace_std)
-    return corr
+    # corr = correlate(img_0mean, template_0mean, mode = 'valid' )
+    # corr = corr / (img.size * img_std * templace_std)
+    # return corr
 
 
 
@@ -376,6 +265,7 @@ def template_pyramid_by_classname(dataset_folder: Path,
     for path in images_paths_sorted:
         template = cv2.imread(str(path))
         template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        # template[template > 250] = 0
         
         # icon_bgra = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         # alpha = icon_bgra[:, :, 3]
@@ -433,7 +323,7 @@ def gaussian_pyrarmid(img: MatLike, num_levels: int) -> list[MatLike]:
     return pyramid
 
 def images_with_annotations(dataset_folder: Path
-                            ) -> Iterator[tuple[MatLike, list[tuple[str, np.ndarray]]]]:
+                            ) -> Iterator[tuple[MatLike, dict[str, np.ndarray]]]:
     """
     Provides an iterator over the image dataset.
     It yields a tuple of the image along with the corresponding
@@ -445,11 +335,11 @@ def images_with_annotations(dataset_folder: Path
 
     for path in images_paths_sorted:
         img = cv2.imread(str(path))
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        # img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         csv_filename = Path(annotations_folder, path.stem).with_suffix(".csv")
         annotations = pd.read_csv(csv_filename)
-        template_bounds = [(row.classname, np.array([row.left, row.right, row.top, row.bottom])) 
-                           for row in annotations.itertuples()]
+        template_bounds = {row.classname:np.array([row.left, row.right, row.top, row.bottom]) 
+                           for row in annotations.itertuples()}
         yield (img, template_bounds)
 
 def path_lexigraphical_order(path: Path) -> tuple[int, str]:
@@ -462,7 +352,7 @@ def path_lexigraphical_order(path: Path) -> tuple[int, str]:
     return (len(path_str), path_str)
 
 def evaluation_metrics(predicted_bounds: dict[str, np.ndarray], 
-                       annotated_bounds: list[tuple[str, np.ndarray]],
+                       annotated_bounds: dict[str, np.ndarray],
                        template_metrics: dict[str, np.ndarray],
                        pred_threshold: float = 0.5
                        ) -> tuple[float, float, float, float]:
@@ -474,7 +364,7 @@ def evaluation_metrics(predicted_bounds: dict[str, np.ndarray],
     num_tp, num_fp, num_fn = 0, 0, 0
     num_boxes = len(annotated_bounds)
 
-    for classname, bound in annotated_bounds:
+    for classname, bound in annotated_bounds.items():
         if classname not in predicted_bounds:
             num_fn += 1
             template_metrics[classname][2] += 1 
@@ -489,10 +379,137 @@ def evaluation_metrics(predicted_bounds: dict[str, np.ndarray],
             template_metrics[classname][1] += 1 
             num_fp += 1
 
+    for classname, bound in predicted_bounds.items():
+        if classname not in annotated_bounds:
+            num_fp += 1
+
     accuracy = num_tp / num_boxes if num_boxes != 0 else 0
     true_pos_rate = num_tp / (num_tp + num_fn) if (num_tp + num_fn) != 0 else 0
-    fpr_denominator = (num_fp + num_boxes - num_tp)
+    fpr_denominator = (num_fp + num_tp)
     false_pos_rate = num_fp / fpr_denominator if fpr_denominator != 0 else 0
     false_neg_rate = num_fn / (num_fn + num_tp) if (num_fn + num_tp) != 0 else 0
     
     return accuracy, true_pos_rate, false_pos_rate, false_neg_rate
+
+def rotate_bounding_box(dataset_folder: Path, image_size: tuple, angle: float
+                        ) -> None:
+    annotations_folder = Path(dataset_folder, "annotations")
+    csv_filename = Path(annotations_folder, "test_image_1").with_suffix(".csv")
+    annotations = pd.read_csv(csv_filename)
+    modified_rows = []
+    for row in annotations.itertuples():
+        left = row.top
+        top = row.left
+        right = row.bottom
+        bottom = row.right
+
+        width, height = image_size
+        centre = (width // 2, height // 2)
+        angle_rad = np.deg2rad(angle)
+
+        right, bottom = rotate_point((right, bottom), centre, angle_rad)
+        left, top = rotate_point((left, top), centre, angle_rad)
+
+        # row.left, row.right, row.top, row.bottom = top, bottom, left, right
+        modified_rows.append((row.classname, left, top, right, bottom))
+
+    updated_csv_path = Path(annotations_folder, f"test_image_1_{angle}").with_suffix(".csv")
+    pd.DataFrame(data=modified_rows, columns=annotations.columns).to_csv(updated_csv_path)
+
+        
+def rotate_point(point: tuple, centre: tuple, angle_rad: float
+                 ) -> tuple[float, float]:
+    sin = np.sin(angle_rad)
+    cos = np.cos(angle_rad)
+    translated_point = (point[0] - centre[0], point[1] - centre[1])
+    x_new = translated_point[0] * cos - translated_point[1] * sin
+    y_new = translated_point[0] * sin + translated_point[1] * cos
+    rotated_point = (x_new + centre[0], y_new + centre[1])
+    return rotated_point
+
+def histogram_normalise(image: MatLike) -> MatLike:
+    # images = task2.images_with_annotations(Path("Task2Dataset"))
+    # for i, (img, _) in enumerate(images):
+    #     noise_image = histogram_normalise(img)
+    #     cv2.imwrite(f"./Task2Dataset/coloured-images/test_image_{i+1}.png", noise_image)
+
+    """Apply histogram normalisation to image."""
+    yuv_image = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
+    yuv_image[:,:,0] = cv2.equalizeHist(yuv_image[:,:,0])
+    equalized_image = cv2.cvtColor(yuv_image, cv2.COLOR_YUV2BGR)
+
+    return equalized_image
+
+def add_gaussian_noise(image: MatLike, mean: float, sigma: float) -> MatLike:
+    # images = task2.images_with_annotations(Path("Task2Dataset"))
+    # for i, (img, _) in enumerate(images):
+    #     noise_image = add_gaussian_noise(img, mean=0, sigma=10)
+    #     cv2.imwrite(f"./Task2Dataset/coloured-images/test_image_{i+1}.png", noise_image)
+
+    """Add Gaussian noise to the image."""
+    gauss = np.random.normal(mean, sigma, image.shape)
+    noisy_image = np.clip(image + gauss, 0, 255).astype(np.uint8)
+    return noisy_image
+
+def debug_template_metrics(template_metrics: dict[str, np.ndarray]) -> None:
+    images = images_with_annotations(Path("Task2Dataset"))
+    all_annotaitons = [annotations for (_, annotations) in images]
+    occurences = {}
+    total_number_of_templates = 0 
+    for image_annotations in all_annotaitons:
+        for classname, _ in image_annotations:
+            if classname not in occurences:
+                occurences[classname] = 1
+            else:
+                occurences[classname] += 1
+            total_number_of_templates += 1
+
+    classnames = np.array(list(template_metrics.keys()))
+    true_positives = np.zeros(classnames.shape)
+    false_positives = np.zeros(classnames.shape)
+    false_negatives = np.zeros(classnames.shape)
+
+    template_accuracies = np.zeros(classnames.shape)
+    true_positive_rate = np.zeros(classnames.shape)
+    false_positive_rate = np.zeros(classnames.shape)
+    false_negative_rate = np.zeros(classnames.shape)
+
+    for i, (classname, t_m) in enumerate(template_metrics.items()):
+        if classname in occurences:
+            tps, fps, fns = t_m[0], t_m[1], t_m[2]
+            true_positives[i] = tps
+            false_positives[i] = fps
+            false_negatives[i] = fns
+
+            print(f"{classname} | t_positives: {tps}; f_positives: {fps}, f_negatives: {fns}")
+            accuracy = tps / occurences[classname]
+            tpr = tps / (tps + fns)
+            fpr = fps / (fps + total_number_of_templates - tps)
+            fnr = fns / (fns + tps)
+
+            template_accuracies[i] = accuracy * 100
+            true_positive_rate[i] = tpr * 100
+            false_positive_rate[i] = fpr * 100
+            false_negative_rate[i] = fnr * 100
+
+            print(f"{classname} | acc: {accuracy}; true pos rate: {tpr}; false pos rate {fpr}; false neg rate {fnr}")
+        
+    print(classnames)
+
+    # write to csv
+    columns = ["classname", "# true positives", "# false positives", "# false negatives"]
+    data = [[classname, tp, fp, fn]
+            for (classname, tp, fp, fn) in zip(classnames, true_positives, false_positives, false_negatives) if classname in occurences]
+    template_classifications = pd.DataFrame(data=data, columns=columns)
+    template_classifications.to_csv("task2-evaluation/classifications-per-template.csv")
+
+    columns = ["classname", "accuracy", "true positive rate", "false positive rate", "false negative rate"]
+    data = [[classname, accuracy, tpr, fpr, fnr] 
+            for (classname, accuracy, tpr, fpr, fnr) in 
+            zip(classnames, template_accuracies, true_positive_rate, false_positive_rate, false_negative_rate)
+            if classname in occurences]
+    template_metrics_df = pd.DataFrame(data=data, columns=columns)
+    template_metrics_df.to_csv("task2-evaluation/metrics-per-template.csv")
+    # template_metrics_df.plot(x="classname", y=["accuracy", "true positive rate", "false positive rate", "false negative rate"])
+    # template_metrics_df.plot(x="classname", y="accuracy")
+    # pd.DataFrame(dataframe, columns=columns).to_csv("metrics-per-template.csv")

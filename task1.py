@@ -3,11 +3,6 @@ import numpy as np
 import pandas as pd
 from cv2.typing import MatLike
 from dataclasses import dataclass
-import cv2
-import matplotlib.pyplot as plt
-
-from tqdm import tqdm, trange
-import time
 
 @dataclass
 class Params:
